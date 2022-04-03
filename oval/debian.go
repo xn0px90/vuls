@@ -1,14 +1,20 @@
+//go:build !scanner
+// +build !scanner
+
 package oval
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/future-architect/vuls/config"
+	"golang.org/x/xerrors"
+
+	"github.com/future-architect/vuls/constant"
+	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
 	"github.com/future-architect/vuls/util"
-	"github.com/kotakanbe/goval-dictionary/db"
-	ovalmodels "github.com/kotakanbe/goval-dictionary/models"
+	ovaldb "github.com/vulsio/goval-dictionary/db"
+	ovalmodels "github.com/vulsio/goval-dictionary/models"
 )
 
 // DebianBase is the base struct of Debian and Ubuntu
@@ -16,73 +22,75 @@ type DebianBase struct {
 	Base
 }
 
-func (o DebianBase) update(r *models.ScanResult, defPacks defPacks) {
-	ovalContent := *o.convertToModel(&defPacks.def)
-	ovalContent.Type = models.NewCveContentType(o.family)
-	vinfo, ok := r.ScannedCves[defPacks.def.Debian.CveID]
-	if !ok {
-		util.Log.Debugf("%s is newly detected by OVAL", defPacks.def.Debian.CveID)
-		vinfo = models.VulnInfo{
-			CveID:       defPacks.def.Debian.CveID,
-			Confidences: []models.Confidence{models.OvalMatch},
-			CveContents: models.NewCveContents(ovalContent),
+func (o DebianBase) update(r *models.ScanResult, defpacks defPacks) {
+	for _, cve := range defpacks.def.Advisory.Cves {
+		ovalContent := o.convertToModel(cve.CveID, &defpacks.def)
+		if ovalContent == nil {
+			continue
 		}
-	} else {
-		cveContents := vinfo.CveContents
-		ctype := models.NewCveContentType(o.family)
-		if _, ok := vinfo.CveContents[ctype]; ok {
-			util.Log.Debugf("%s OVAL will be overwritten",
-				defPacks.def.Debian.CveID)
+		vinfo, ok := r.ScannedCves[cve.CveID]
+		if !ok {
+			logging.Log.Debugf("%s is newly detected by OVAL", cve.CveID)
+			vinfo = models.VulnInfo{
+				CveID:       cve.CveID,
+				Confidences: []models.Confidence{models.OvalMatch},
+				CveContents: models.NewCveContents(*ovalContent),
+			}
 		} else {
-			util.Log.Debugf("%s is also detected by OVAL",
-				defPacks.def.Debian.CveID)
-			cveContents = models.CveContents{}
-		}
-		if r.Family != config.Raspbian {
+			cveContents := vinfo.CveContents
+			if _, ok := vinfo.CveContents[ovalContent.Type]; ok {
+				logging.Log.Debugf("%s OVAL will be overwritten", cve.CveID)
+			} else {
+				logging.Log.Debugf("%s is also detected by OVAL", cve.CveID)
+				cveContents = models.CveContents{}
+			}
 			vinfo.Confidences.AppendIfMissing(models.OvalMatch)
-		} else {
-			if len(vinfo.Confidences) == 0 {
-				vinfo.Confidences.AppendIfMissing(models.OvalMatch)
+			cveContents[ovalContent.Type] = []models.CveContent{*ovalContent}
+			vinfo.CveContents = cveContents
+		}
+
+		// uniq(vinfo.AffectedPackages[].Name + defPacks.binpkgFixstat(map[string(=package name)]fixStat{}))
+		collectBinpkgFixstat := defPacks{
+			binpkgFixstat: map[string]fixStat{},
+		}
+		for packName, fixStatus := range defpacks.binpkgFixstat {
+			collectBinpkgFixstat.binpkgFixstat[packName] = fixStatus
+		}
+
+		for _, pack := range vinfo.AffectedPackages {
+			collectBinpkgFixstat.binpkgFixstat[pack.Name] = fixStat{
+				notFixedYet: pack.NotFixedYet,
+				fixedIn:     pack.FixedIn,
+				isSrcPack:   false,
 			}
 		}
-		cveContents[ctype] = ovalContent
-		vinfo.CveContents = cveContents
-	}
 
-	// uniq(vinfo.PackNames + defPacks.binpkgStat)
-	for _, pack := range vinfo.AffectedPackages {
-		defPacks.binpkgFixstat[pack.Name] = fixStat{
-			notFixedYet: pack.NotFixedYet,
-			fixedIn:     pack.FixedIn,
-			isSrcPack:   false,
-		}
-	}
-
-	// Update package status of source packages.
-	// In the case of Debian based Linux, sometimes source package name is difined as affected package in OVAL.
-	// To display binary package name showed in apt-get, need to convert source name to binary name.
-	for binName := range defPacks.binpkgFixstat {
-		if srcPack, ok := r.SrcPackages.FindByBinName(binName); ok {
-			for _, p := range defPacks.def.AffectedPacks {
-				if p.Name == srcPack.Name {
-					defPacks.binpkgFixstat[binName] = fixStat{
-						notFixedYet: p.NotFixedYet,
-						fixedIn:     p.Version,
-						isSrcPack:   true,
-						srcPackName: srcPack.Name,
+		// Update package status of source packages.
+		// In the case of Debian based Linux, sometimes source package name is defined as affected package in OVAL.
+		// To display binary package name showed in apt-get, need to convert source name to binary name.
+		for binName := range defpacks.binpkgFixstat {
+			if srcPack, ok := r.SrcPackages.FindByBinName(binName); ok {
+				for _, p := range defpacks.def.AffectedPacks {
+					if p.Name == srcPack.Name {
+						collectBinpkgFixstat.binpkgFixstat[binName] = fixStat{
+							notFixedYet: p.NotFixedYet,
+							fixedIn:     p.Version,
+							isSrcPack:   true,
+							srcPackName: srcPack.Name,
+						}
 					}
 				}
 			}
 		}
-	}
 
-	vinfo.AffectedPackages = defPacks.toPackStatuses()
-	vinfo.AffectedPackages.Sort()
-	r.ScannedCves[defPacks.def.Debian.CveID] = vinfo
+		vinfo.AffectedPackages = collectBinpkgFixstat.toPackStatuses()
+		vinfo.AffectedPackages.Sort()
+		r.ScannedCves[cve.CveID] = vinfo
+	}
 }
 
-func (o DebianBase) convertToModel(def *ovalmodels.Definition) *models.CveContent {
-	refs := []models.Reference{}
+func (o DebianBase) convertToModel(cveID string, def *ovalmodels.Definition) *models.CveContent {
+	refs := make([]models.Reference, 0, len(def.References))
 	for _, r := range def.References {
 		refs = append(refs, models.Reference{
 			Link:   r.RefURL,
@@ -91,14 +99,23 @@ func (o DebianBase) convertToModel(def *ovalmodels.Definition) *models.CveConten
 		})
 	}
 
-	return &models.CveContent{
-		CveID:         def.Debian.CveID,
-		Title:         def.Title,
-		Summary:       def.Description,
-		Cvss2Severity: def.Advisory.Severity,
-		Cvss3Severity: def.Advisory.Severity,
-		References:    refs,
+	for _, cve := range def.Advisory.Cves {
+		if cve.CveID != cveID {
+			continue
+		}
+
+		return &models.CveContent{
+			Type:          models.NewCveContentType(o.family),
+			CveID:         cve.CveID,
+			Title:         def.Title,
+			Summary:       def.Description,
+			Cvss2Severity: def.Advisory.Severity,
+			Cvss3Severity: def.Advisory.Severity,
+			References:    refs,
+		}
 	}
+
+	return nil
 }
 
 // Debian is the interface for Debian OVAL
@@ -107,59 +124,49 @@ type Debian struct {
 }
 
 // NewDebian creates OVAL client for Debian
-func NewDebian() Debian {
+func NewDebian(driver ovaldb.DB, baseURL string) Debian {
 	return Debian{
 		DebianBase{
 			Base{
-				family: config.Debian,
+				driver:  driver,
+				baseURL: baseURL,
+				family:  constant.Debian,
 			},
 		},
 	}
 }
 
 // FillWithOval returns scan result after updating CVE info by OVAL
-func (o Debian) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err error) {
+func (o Debian) FillWithOval(r *models.ScanResult) (nCVEs int, err error) {
 
 	//Debian's uname gives both of kernel release(uname -r), version(kernel-image version)
 	linuxImage := "linux-image-" + r.RunningKernel.Release
 
 	// Add linux and set the version of running kernel to search OVAL.
 	if r.Container.ContainerID == "" {
-		newVer := ""
-		if p, ok := r.Packages[linuxImage]; ok {
-			newVer = p.NewVersion
-		}
-		r.Packages["linux"] = models.Package{
-			Name:       "linux",
-			Version:    r.RunningKernel.Version,
-			NewVersion: newVer,
+		if r.RunningKernel.Version != "" {
+			newVer := ""
+			if p, ok := r.Packages[linuxImage]; ok {
+				newVer = p.NewVersion
+			}
+			r.Packages["linux"] = models.Package{
+				Name:       "linux",
+				Version:    r.RunningKernel.Version,
+				NewVersion: newVer,
+			}
+		} else {
+			logging.Log.Warnf("Since the exact kernel version is not available, the vulnerability in the linux package is not detected.")
 		}
 	}
 
 	var relatedDefs ovalResult
-	if config.Conf.OvalDict.IsFetchViaHTTP() {
-		if r.Family != config.Raspbian {
-			if relatedDefs, err = getDefsByPackNameViaHTTP(r); err != nil {
-				return 0, err
-			}
-		} else {
-			// OVAL does not support Package for Raspbian, so skip it.
-			result := r.RemoveRaspbianPackFromResult()
-			if relatedDefs, err = getDefsByPackNameViaHTTP(&result); err != nil {
-				return 0, err
-			}
+	if o.driver == nil {
+		if relatedDefs, err = getDefsByPackNameViaHTTP(r, o.baseURL); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions via HTTP. err: %w", err)
 		}
 	} else {
-		if r.Family != config.Raspbian {
-			if relatedDefs, err = getDefsByPackNameFromOvalDB(driver, r); err != nil {
-				return 0, err
-			}
-		} else {
-			// OVAL does not support Package for Raspbian, so skip it.
-			result := r.RemoveRaspbianPackFromResult()
-			if relatedDefs, err = getDefsByPackNameFromOvalDB(driver, &result); err != nil {
-				return 0, err
-			}
+		if relatedDefs, err = getDefsByPackNameFromOvalDB(r, o.driver); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions from DB. err: %w", err)
 		}
 	}
 
@@ -183,9 +190,11 @@ func (o Debian) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 	}
 
 	for _, vuln := range r.ScannedCves {
-		if cont, ok := vuln.CveContents[models.Debian]; ok {
-			cont.SourceLink = "https://security-tracker.debian.org/tracker/" + cont.CveID
-			vuln.CveContents[models.Debian] = cont
+		if conts, ok := vuln.CveContents[models.Debian]; ok {
+			for i, cont := range conts {
+				cont.SourceLink = "https://security-tracker.debian.org/tracker/" + cont.CveID
+				vuln.CveContents[models.Debian][i] = cont
+			}
 		}
 	}
 	return len(relatedDefs.entries), nil
@@ -197,19 +206,21 @@ type Ubuntu struct {
 }
 
 // NewUbuntu creates OVAL client for Debian
-func NewUbuntu() Ubuntu {
+func NewUbuntu(driver ovaldb.DB, baseURL string) Ubuntu {
 	return Ubuntu{
 		DebianBase{
 			Base{
-				family: config.Ubuntu,
+				driver:  driver,
+				baseURL: baseURL,
+				family:  constant.Ubuntu,
 			},
 		},
 	}
 }
 
 // FillWithOval returns scan result after updating CVE info by OVAL
-func (o Ubuntu) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err error) {
-	switch major(r.Release) {
+func (o Ubuntu) FillWithOval(r *models.ScanResult) (nCVEs int, err error) {
+	switch util.Major(r.Release) {
 	case "14":
 		kernelNamesInOval := []string{
 			"linux-aws",
@@ -224,7 +235,7 @@ func (o Ubuntu) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 			"linux-signed-lts-xenial",
 			"linux",
 		}
-		return o.fillWithOval(driver, r, kernelNamesInOval)
+		return o.fillWithOval(r, kernelNamesInOval)
 	case "16":
 		kernelNamesInOval := []string{
 			"linux-aws",
@@ -259,7 +270,7 @@ func (o Ubuntu) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 			"linux-snapdragon",
 			"linux",
 		}
-		return o.fillWithOval(driver, r, kernelNamesInOval)
+		return o.fillWithOval(r, kernelNamesInOval)
 	case "18":
 		kernelNamesInOval := []string{
 			"linux-aws",
@@ -314,7 +325,7 @@ func (o Ubuntu) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 			"linux-snapdragon",
 			"linux",
 		}
-		return o.fillWithOval(driver, r, kernelNamesInOval)
+		return o.fillWithOval(r, kernelNamesInOval)
 	case "20":
 		kernelNamesInOval := []string{
 			"linux-aws",
@@ -342,12 +353,53 @@ func (o Ubuntu) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 			"linux-signed-oracle",
 			"linux",
 		}
-		return o.fillWithOval(driver, r, kernelNamesInOval)
+		return o.fillWithOval(r, kernelNamesInOval)
+	case "21":
+		kernelNamesInOval := []string{
+			"linux-aws",
+			"linux-base-sgx",
+			"linux-base",
+			"linux-cloud-tools-common",
+			"linux-cloud-tools-generic",
+			"linux-cloud-tools-lowlatency",
+			"linux-cloud-tools-virtual",
+			"linux-gcp",
+			"linux-generic",
+			"linux-gke",
+			"linux-headers-aws",
+			"linux-headers-gcp",
+			"linux-headers-gke",
+			"linux-headers-oracle",
+			"linux-image-aws",
+			"linux-image-extra-virtual",
+			"linux-image-gcp",
+			"linux-image-generic",
+			"linux-image-gke",
+			"linux-image-lowlatency",
+			"linux-image-oracle",
+			"linux-image-virtual",
+			"linux-lowlatency",
+			"linux-modules-extra-aws",
+			"linux-modules-extra-gcp",
+			"linux-modules-extra-gke",
+			"linux-oracle",
+			"linux-tools-aws",
+			"linux-tools-common",
+			"linux-tools-gcp",
+			"linux-tools-generic",
+			"linux-tools-gke",
+			"linux-tools-host",
+			"linux-tools-lowlatency",
+			"linux-tools-oracle",
+			"linux-tools-virtual",
+			"linux-virtual",
+		}
+		return o.fillWithOval(r, kernelNamesInOval)
 	}
 	return 0, fmt.Errorf("Ubuntu %s is not support for now", r.Release)
 }
 
-func (o Ubuntu) fillWithOval(driver db.DB, r *models.ScanResult, kernelNamesInOval []string) (nCVEs int, err error) {
+func (o Ubuntu) fillWithOval(r *models.ScanResult, kernelNamesInOval []string) (nCVEs int, err error) {
 	linuxImage := "linux-image-" + r.RunningKernel.Release
 	runningKernelVersion := ""
 	kernelPkgInOVAL := ""
@@ -359,7 +411,7 @@ func (o Ubuntu) fillWithOval(driver db.DB, r *models.ScanResult, kernelNamesInOv
 		if v, ok := r.Packages[linuxImage]; ok {
 			runningKernelVersion = v.Version
 		} else {
-			util.Log.Warnf("Unable to detect vulns of running kernel because the version of the runnning kernel is unknown. server: %s",
+			logging.Log.Warnf("Unable to detect vulns of running kernel because the version of the running kernel is unknown. server: %s",
 				r.ServerName)
 		}
 
@@ -387,18 +439,18 @@ func (o Ubuntu) fillWithOval(driver db.DB, r *models.ScanResult, kernelNamesInOv
 		}
 		for srcPackName, srcPack := range r.SrcPackages {
 			copiedSourcePkgs[srcPackName] = srcPack
-			targetBianryNames := []string{}
+			targetBinaryNames := []string{}
 			for _, n := range srcPack.BinaryNames {
 				if n == kernelPkgInOVAL || !strings.HasPrefix(n, "linux-") {
-					targetBianryNames = append(targetBianryNames, n)
+					targetBinaryNames = append(targetBinaryNames, n)
 				}
 			}
-			srcPack.BinaryNames = targetBianryNames
+			srcPack.BinaryNames = targetBinaryNames
 			r.SrcPackages[srcPackName] = srcPack
 		}
 
 		if kernelPkgInOVAL == "" {
-			util.Log.Warnf("The OVAL name of the running kernel image %+v is not found. So vulns of `linux` wll be detected. server: %s",
+			logging.Log.Warnf("The OVAL name of the running kernel image %+v is not found. So vulns of `linux` wll be detected. server: %s",
 				r.RunningKernel, r.ServerName)
 			kernelPkgInOVAL = "linux"
 			isOVALKernelPkgAdded = true
@@ -413,13 +465,13 @@ func (o Ubuntu) fillWithOval(driver db.DB, r *models.ScanResult, kernelNamesInOv
 	}
 
 	var relatedDefs ovalResult
-	if config.Conf.OvalDict.IsFetchViaHTTP() {
-		if relatedDefs, err = getDefsByPackNameViaHTTP(r); err != nil {
-			return 0, err
+	if o.driver == nil {
+		if relatedDefs, err = getDefsByPackNameViaHTTP(r, o.baseURL); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions via HTTP. err: %w", err)
 		}
 	} else {
-		if relatedDefs, err = getDefsByPackNameFromOvalDB(driver, r); err != nil {
-			return 0, err
+		if relatedDefs, err = getDefsByPackNameFromOvalDB(r, o.driver); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions from DB. err: %w", err)
 		}
 	}
 
@@ -448,9 +500,11 @@ func (o Ubuntu) fillWithOval(driver db.DB, r *models.ScanResult, kernelNamesInOv
 	}
 
 	for _, vuln := range r.ScannedCves {
-		if cont, ok := vuln.CveContents[models.Ubuntu]; ok {
-			cont.SourceLink = "http://people.ubuntu.com/~ubuntu-security/cve/" + cont.CveID
-			vuln.CveContents[models.Ubuntu] = cont
+		if conts, ok := vuln.CveContents[models.Ubuntu]; ok {
+			for i, cont := range conts {
+				cont.SourceLink = "http://people.ubuntu.com/~ubuntu-security/cve/" + cont.CveID
+				vuln.CveContents[models.Ubuntu][i] = cont
+			}
 		}
 	}
 	return len(relatedDefs.entries), nil

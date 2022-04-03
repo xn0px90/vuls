@@ -1,10 +1,15 @@
+//go:build !scanner
+// +build !scanner
+
 package oval
 
 import (
-	"github.com/future-architect/vuls/config"
+	"golang.org/x/xerrors"
+
+	"github.com/future-architect/vuls/constant"
+	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
-	"github.com/future-architect/vuls/util"
-	"github.com/kotakanbe/goval-dictionary/db"
+	ovaldb "github.com/vulsio/goval-dictionary/db"
 )
 
 // Alpine is the struct of Alpine Linux
@@ -13,24 +18,26 @@ type Alpine struct {
 }
 
 // NewAlpine creates OVAL client for SUSE
-func NewAlpine() Alpine {
+func NewAlpine(driver ovaldb.DB, baseURL string) Alpine {
 	return Alpine{
 		Base{
-			family: config.Alpine,
+			driver:  driver,
+			baseURL: baseURL,
+			family:  constant.Alpine,
 		},
 	}
 }
 
 // FillWithOval returns scan result after updating CVE info by OVAL
-func (o Alpine) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err error) {
+func (o Alpine) FillWithOval(r *models.ScanResult) (nCVEs int, err error) {
 	var relatedDefs ovalResult
-	if config.Conf.OvalDict.IsFetchViaHTTP() {
-		if relatedDefs, err = getDefsByPackNameViaHTTP(r); err != nil {
-			return 0, err
+	if o.driver == nil {
+		if relatedDefs, err = getDefsByPackNameViaHTTP(r, o.baseURL); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions via HTTP. err: %w", err)
 		}
 	} else {
-		if relatedDefs, err = getDefsByPackNameFromOvalDB(driver, r); err != nil {
-			return 0, err
+		if relatedDefs, err = getDefsByPackNameFromOvalDB(r, o.driver); err != nil {
+			return 0, xerrors.Errorf("Failed to get Definitions from DB. err: %w", err)
 		}
 	}
 	for _, defPacks := range relatedDefs.entries {
@@ -40,18 +47,18 @@ func (o Alpine) FillWithOval(driver db.DB, r *models.ScanResult) (nCVEs int, err
 	return len(relatedDefs.entries), nil
 }
 
-func (o Alpine) update(r *models.ScanResult, defPacks defPacks) {
-	cveID := defPacks.def.Advisory.Cves[0].CveID
+func (o Alpine) update(r *models.ScanResult, defpacks defPacks) {
+	cveID := defpacks.def.Advisory.Cves[0].CveID
 	vinfo, ok := r.ScannedCves[cveID]
 	if !ok {
-		util.Log.Debugf("%s is newly detected by OVAL", cveID)
+		logging.Log.Debugf("%s is newly detected by OVAL", cveID)
 		vinfo = models.VulnInfo{
 			CveID:       cveID,
 			Confidences: []models.Confidence{models.OvalMatch},
 		}
 	}
 
-	vinfo.AffectedPackages = defPacks.toPackStatuses()
+	vinfo.AffectedPackages = defpacks.toPackStatuses()
 	vinfo.AffectedPackages.Sort()
 	r.ScannedCves[cveID] = vinfo
 }

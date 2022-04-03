@@ -2,163 +2,32 @@ package parser
 
 import (
 	"encoding/json"
-	"sort"
-	"time"
 
-	"github.com/aquasecurity/fanal/analyzer/os"
-	"github.com/aquasecurity/trivy/pkg/report"
-	"github.com/aquasecurity/trivy/pkg/types"
+	v2 "github.com/future-architect/vuls/contrib/trivy/parser/v2"
 	"github.com/future-architect/vuls/models"
+	"golang.org/x/xerrors"
 )
 
-// Parse :
-func Parse(vulnJSON []byte, scanResult *models.ScanResult) (result *models.ScanResult, err error) {
-	var trivyResults report.Results
-	if err = json.Unmarshal(vulnJSON, &trivyResults); err != nil {
-		return nil, err
-	}
-
-	pkgs := models.Packages{}
-	vulnInfos := models.VulnInfos{}
-	uniqueLibraryScannerPaths := map[string]models.LibraryScanner{}
-	for _, trivyResult := range trivyResults {
-		for _, vuln := range trivyResult.Vulnerabilities {
-			if _, ok := vulnInfos[vuln.VulnerabilityID]; !ok {
-				vulnInfos[vuln.VulnerabilityID] = models.VulnInfo{
-					CveID: vuln.VulnerabilityID,
-					Confidences: models.Confidences{
-						{
-							Score:           100,
-							DetectionMethod: models.TrivyMatchStr,
-						},
-					},
-					AffectedPackages: models.PackageFixStatuses{},
-					CveContents:      models.CveContents{},
-					LibraryFixedIns:  models.LibraryFixedIns{},
-					// VulnType : "",
-				}
-			}
-			vulnInfo := vulnInfos[vuln.VulnerabilityID]
-			var notFixedYet bool
-			fixState := ""
-			if len(vuln.FixedVersion) == 0 {
-				notFixedYet = true
-				fixState = "Affected"
-			}
-			var references models.References
-			for _, reference := range vuln.References {
-				references = append(references, models.Reference{
-					Source: "trivy",
-					Link:   reference,
-				})
-			}
-
-			sort.Slice(references, func(i, j int) bool {
-				return references[i].Link < references[j].Link
-			})
-
-			vulnInfo.CveContents = models.CveContents{
-				models.Trivy: models.CveContent{
-					Cvss3Severity: vuln.Severity,
-					References:    references,
-					Title:         vuln.Title,
-					Summary:       vuln.Description,
-				},
-			}
-			// do only if image type is Vuln
-			if IsTrivySupportedOS(trivyResult.Type) {
-				pkgs[vuln.PkgName] = models.Package{
-					Name:    vuln.PkgName,
-					Version: vuln.InstalledVersion,
-				}
-				vulnInfo.AffectedPackages = append(vulnInfo.AffectedPackages, models.PackageFixStatus{
-					Name:        vuln.PkgName,
-					NotFixedYet: notFixedYet,
-					FixState:    fixState,
-					FixedIn:     vuln.FixedVersion,
-				})
-
-				// overwrite every time if os package
-				scanResult.Family = trivyResult.Type
-				scanResult.ServerName = trivyResult.Target
-				scanResult.Optional = map[string]interface{}{
-					"trivy-target": trivyResult.Target,
-				}
-				scanResult.ScannedAt = time.Now()
-				scanResult.ScannedBy = "trivy"
-				scanResult.ScannedVia = "trivy"
-			} else {
-				// LibraryScanの結果
-				vulnInfo.LibraryFixedIns = append(vulnInfo.LibraryFixedIns, models.LibraryFixedIn{
-					Key:     trivyResult.Type,
-					Name:    vuln.PkgName,
-					Path:    trivyResult.Target,
-					FixedIn: vuln.FixedVersion,
-				})
-				libScanner := uniqueLibraryScannerPaths[trivyResult.Target]
-				libScanner.Libs = append(libScanner.Libs, types.Library{
-					Name:    vuln.PkgName,
-					Version: vuln.InstalledVersion,
-				})
-				uniqueLibraryScannerPaths[trivyResult.Target] = libScanner
-			}
-			vulnInfos[vuln.VulnerabilityID] = vulnInfo
-		}
-	}
-	// flatten and unique libraries
-	libraryScanners := make([]models.LibraryScanner, 0, len(uniqueLibraryScannerPaths))
-	for path, v := range uniqueLibraryScannerPaths {
-		uniqueLibrary := map[string]types.Library{}
-		for _, lib := range v.Libs {
-			uniqueLibrary[lib.Name+lib.Version] = lib
-		}
-
-		var libraries []types.Library
-		for _, library := range uniqueLibrary {
-			libraries = append(libraries, library)
-		}
-
-		sort.Slice(libraries, func(i, j int) bool {
-			return libraries[i].Name < libraries[j].Name
-		})
-
-		libscanner := models.LibraryScanner{
-			Path: path,
-			Libs: libraries,
-		}
-		libraryScanners = append(libraryScanners, libscanner)
-	}
-	sort.Slice(libraryScanners, func(i, j int) bool {
-		return libraryScanners[i].Path < libraryScanners[j].Path
-	})
-	scanResult.ScannedCves = vulnInfos
-	scanResult.Packages = pkgs
-	scanResult.LibraryScanners = libraryScanners
-	return scanResult, nil
+// Parser is a parser interface
+type Parser interface {
+	Parse(vulnJSON []byte) (result *models.ScanResult, err error)
 }
 
-// IsTrivySupportedOS :
-func IsTrivySupportedOS(family string) bool {
-	supportedFamilies := []string{
-		os.RedHat,
-		os.Debian,
-		os.Ubuntu,
-		os.CentOS,
-		os.Fedora,
-		os.Amazon,
-		os.Oracle,
-		os.Windows,
-		os.OpenSUSE,
-		os.OpenSUSELeap,
-		os.OpenSUSETumbleweed,
-		os.SLES,
-		os.Photon,
-		os.Alpine,
+// Report is used for judgeing the scheme version of trivy
+type Report struct {
+	SchemaVersion int `json:",omitempty"`
+}
+
+// NewParser make a parser for the schema version of trivy
+func NewParser(vulnJSON []byte) (Parser, error) {
+	r := Report{}
+	if err := json.Unmarshal(vulnJSON, &r); err != nil {
+		return nil, xerrors.Errorf("Failed to parse JSON. Please use the latest version of trivy, trivy-to-vuls and future-vuls")
 	}
-	for _, supportedFamily := range supportedFamilies {
-		if family == supportedFamily {
-			return true
-		}
+	switch r.SchemaVersion {
+	case 2:
+		return v2.ParserV2{}, nil
+	default:
+		return nil, xerrors.Errorf("Failed to parse trivy json. SchemeVersion %d is not supported yet. Please contact support", r.SchemaVersion)
 	}
-	return false
 }

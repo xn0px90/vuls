@@ -1,11 +1,14 @@
+//go:build !scanner
+// +build !scanner
+
 package gost
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/future-architect/vuls/models"
-	"github.com/knqyf263/gost/db"
-	gostmodels "github.com/knqyf263/gost/models"
+	gostmodels "github.com/vulsio/gost/models"
 )
 
 // Microsoft is Gost client for windows
@@ -13,32 +16,40 @@ type Microsoft struct {
 	Base
 }
 
-// DetectUnfixed fills cve information that has in Gost
-func (ms Microsoft) DetectUnfixed(driver db.DB, r *models.ScanResult, _ bool) (nCVEs int, err error) {
-	if driver == nil {
+// DetectCVEs fills cve information that has in Gost
+func (ms Microsoft) DetectCVEs(r *models.ScanResult, _ bool) (nCVEs int, err error) {
+	if ms.driver == nil {
 		return 0, nil
 	}
 	cveIDs := []string{}
 	for cveID := range r.ScannedCves {
 		cveIDs = append(cveIDs, cveID)
 	}
-	for cveID, msCve := range driver.GetMicrosoftMulti(cveIDs) {
+	msCves, err := ms.driver.GetMicrosoftMulti(cveIDs)
+	if err != nil {
+		return 0, nil
+	}
+	for cveID, msCve := range msCves {
 		if _, ok := r.ScannedCves[cveID]; !ok {
 			continue
 		}
-		cveCont := ms.ConvertToModel(&msCve)
-		v, _ := r.ScannedCves[cveID]
+		cveCont, mitigations := ms.ConvertToModel(&msCve)
+		v := r.ScannedCves[cveID]
 		if v.CveContents == nil {
 			v.CveContents = models.CveContents{}
 		}
-		v.CveContents[models.Microsoft] = *cveCont
+		v.CveContents[models.Microsoft] = []models.CveContent{*cveCont}
+		v.Mitigations = append(v.Mitigations, mitigations...)
 		r.ScannedCves[cveID] = v
 	}
 	return len(cveIDs), nil
 }
 
 // ConvertToModel converts gost model to vuls model
-func (ms Microsoft) ConvertToModel(cve *gostmodels.MicrosoftCVE) *models.CveContent {
+func (ms Microsoft) ConvertToModel(cve *gostmodels.MicrosoftCVE) (*models.CveContent, []models.Mitigation) {
+	sort.Slice(cve.ScoreSets, func(i, j int) bool {
+		return cve.ScoreSets[i].Vector < cve.ScoreSets[j].Vector
+	})
 	v3score := 0.0
 	var v3Vector string
 	for _, scoreSet := range cve.ScoreSets {
@@ -67,10 +78,9 @@ func (ms Microsoft) ConvertToModel(cve *gostmodels.MicrosoftCVE) *models.CveCont
 
 	option := map[string]string{}
 	if 0 < len(cve.ExploitStatus) {
+		// TODO: CVE-2020-0739
+		// "exploit_status": "Publicly Disclosed:No;Exploited:No;Latest Software Release:Exploitation Less Likely;Older Software Release:Exploitation Less Likely;DOS:N/A",
 		option["exploit"] = cve.ExploitStatus
-	}
-	if 0 < len(cve.Workaround) {
-		option["workaround"] = cve.Workaround
 	}
 	kbids := []string{}
 	for _, kbid := range cve.KBIDs {
@@ -78,6 +88,23 @@ func (ms Microsoft) ConvertToModel(cve *gostmodels.MicrosoftCVE) *models.CveCont
 	}
 	if 0 < len(kbids) {
 		option["kbids"] = strings.Join(kbids, ",")
+	}
+
+	vendorURL := "https://msrc.microsoft.com/update-guide/vulnerability/" + cve.CveID
+	mitigations := []models.Mitigation{}
+	if cve.Mitigation != "" {
+		mitigations = append(mitigations, models.Mitigation{
+			CveContentType: models.Microsoft,
+			Mitigation:     cve.Mitigation,
+			URL:            vendorURL,
+		})
+	}
+	if cve.Workaround != "" {
+		mitigations = append(mitigations, models.Mitigation{
+			CveContentType: models.Microsoft,
+			Mitigation:     cve.Workaround,
+			URL:            vendorURL,
+		})
 	}
 
 	return &models.CveContent{
@@ -90,10 +117,9 @@ func (ms Microsoft) ConvertToModel(cve *gostmodels.MicrosoftCVE) *models.CveCont
 		Cvss3Severity: v3Severity,
 		References:    refs,
 		CweIDs:        cwe,
-		Mitigation:    cve.Mitigation,
 		Published:     cve.PublishDate,
 		LastModified:  cve.LastUpdateDate,
-		SourceLink:    "https://portal.msrc.microsoft.com/ja-jp/security-guidance/advisory/" + cve.CveID,
+		SourceLink:    vendorURL,
 		Optional:      option,
-	}
+	}, mitigations
 }

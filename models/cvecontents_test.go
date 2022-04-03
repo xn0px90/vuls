@@ -11,12 +11,12 @@ func TestExcept(t *testing.T) {
 		out CveContents
 	}{{
 		in: CveContents{
-			RedHat: {Type: RedHat},
-			Ubuntu: {Type: Ubuntu},
-			Debian: {Type: Debian},
+			RedHat: []CveContent{{Type: RedHat}},
+			Ubuntu: []CveContent{{Type: Ubuntu}},
+			Debian: []CveContent{{Type: Debian}},
 		},
 		out: CveContents{
-			RedHat: {Type: RedHat},
+			RedHat: []CveContent{{Type: RedHat}},
 		},
 	},
 	}
@@ -30,9 +30,10 @@ func TestExcept(t *testing.T) {
 
 func TestSourceLinks(t *testing.T) {
 	type in struct {
-		lang  string
-		cveID string
-		cont  CveContents
+		lang        string
+		cveID       string
+		cont        CveContents
+		confidences Confidences
 	}
 	var tests = []struct {
 		in  in
@@ -44,32 +45,50 @@ func TestSourceLinks(t *testing.T) {
 				lang:  "ja",
 				cveID: "CVE-2017-6074",
 				cont: CveContents{
-					Jvn: {
+					Jvn: []CveContent{{
 						Type:       Jvn,
 						SourceLink: "https://jvn.jp/vu/JVNVU93610402/",
-					},
-					RedHat: {
+					}},
+					RedHat: []CveContent{{
 						Type:       RedHat,
 						SourceLink: "https://access.redhat.com/security/cve/CVE-2017-6074",
-					},
-					NvdXML: {
-						Type:       NvdXML,
+					}},
+					Nvd: []CveContent{{
+						Type: Nvd,
+						References: []Reference{
+							{
+								Link:   "https://lists.apache.org/thread.html/765be3606d865de513f6df9288842c3cf58b09a987c617a535f2b99d@%3Cusers.tapestry.apache.org%3E",
+								Source: "",
+								RefID:  "",
+								Tags:   []string{"Vendor Advisory"},
+							},
+							{
+								Link:   "http://yahoo.com",
+								Source: "",
+								RefID:  "",
+								Tags:   []string{"Vendor"},
+							},
+						},
 						SourceLink: "https://nvd.nist.gov/vuln/detail/CVE-2017-6074",
-					},
+					}},
 				},
 			},
 			out: []CveContentStr{
 				{
-					Type:  Jvn,
-					Value: "https://jvn.jp/vu/JVNVU93610402/",
+					Type:  Nvd,
+					Value: "https://lists.apache.org/thread.html/765be3606d865de513f6df9288842c3cf58b09a987c617a535f2b99d@%3Cusers.tapestry.apache.org%3E",
 				},
 				{
-					Type:  NvdXML,
+					Type:  Nvd,
 					Value: "https://nvd.nist.gov/vuln/detail/CVE-2017-6074",
 				},
 				{
 					Type:  RedHat,
 					Value: "https://access.redhat.com/security/cve/CVE-2017-6074",
+				},
+				{
+					Type:  Jvn,
+					Value: "https://jvn.jp/vu/JVNVU93610402/",
 				},
 			},
 		},
@@ -79,25 +98,17 @@ func TestSourceLinks(t *testing.T) {
 				lang:  "en",
 				cveID: "CVE-2017-6074",
 				cont: CveContents{
-					Jvn: {
+					Jvn: []CveContent{{
 						Type:       Jvn,
 						SourceLink: "https://jvn.jp/vu/JVNVU93610402/",
-					},
-					RedHat: {
+					}},
+					RedHat: []CveContent{{
 						Type:       RedHat,
 						SourceLink: "https://access.redhat.com/security/cve/CVE-2017-6074",
-					},
-					NvdXML: {
-						Type:       NvdXML,
-						SourceLink: "https://nvd.nist.gov/vuln/detail/CVE-2017-6074",
-					},
+					}},
 				},
 			},
 			out: []CveContentStr{
-				{
-					Type:  NvdXML,
-					Value: "https://nvd.nist.gov/vuln/detail/CVE-2017-6074",
-				},
 				{
 					Type:  RedHat,
 					Value: "https://access.redhat.com/security/cve/CVE-2017-6074",
@@ -118,73 +129,123 @@ func TestSourceLinks(t *testing.T) {
 				},
 			},
 		},
+		// Confidence: JvnVendorProductMatch
+		{
+			in: in{
+				lang:  "en",
+				cveID: "CVE-2017-6074",
+				cont: CveContents{
+					Jvn: []CveContent{{
+						Type:       Jvn,
+						SourceLink: "https://jvn.jp/vu/JVNVU93610402/",
+					}},
+				},
+				confidences: Confidences{
+					Confidence{DetectionMethod: JvnVendorProductMatchStr},
+				},
+			},
+			out: []CveContentStr{
+				{
+					Type:  Jvn,
+					Value: "https://jvn.jp/vu/JVNVU93610402/",
+				},
+			},
+		},
 	}
 	for i, tt := range tests {
-		actual := tt.in.cont.SourceLinks(tt.in.lang, "redhat", tt.in.cveID)
+		actual := tt.in.cont.PrimarySrcURLs(tt.in.lang, "redhat", tt.in.cveID, tt.in.confidences)
 		if !reflect.DeepEqual(tt.out, actual) {
 			t.Errorf("\n[%d] expected: %v\n  actual: %v\n", i, tt.out, actual)
 		}
 	}
 }
 
-func TestVendorLink(t *testing.T) {
-	type in struct {
-		family string
-		vinfo  VulnInfo
-	}
-	var tests = []struct {
-		in  in
-		out map[string]string
+func TestCveContents_Sort(t *testing.T) {
+	tests := []struct {
+		name string
+		v    CveContents
+		want CveContents
 	}{
 		{
-			in: in{
-				family: "redhat",
-				vinfo: VulnInfo{
-					CveID: "CVE-2017-6074",
-					CveContents: CveContents{
-						Jvn: {
-							Type:       Jvn,
-							SourceLink: "https://jvn.jp/vu/JVNVU93610402/",
-						},
-						RedHat: {
-							Type:       RedHat,
-							SourceLink: "https://access.redhat.com/security/cve/CVE-2017-6074",
-						},
-						NvdXML: {
-							Type:       NvdXML,
-							SourceLink: "https://nvd.nist.gov/vuln/detail/CVE-2017-6074",
-						},
-					},
+			name: "sorted",
+			v: map[CveContentType][]CveContent{
+				"jvn": {
+					{Cvss3Score: 3},
+					{Cvss3Score: 10},
 				},
 			},
-			out: map[string]string{
-				"RHEL-CVE": "https://access.redhat.com/security/cve/CVE-2017-6074",
+			want: map[CveContentType][]CveContent{
+				"jvn": {
+					{Cvss3Score: 10},
+					{Cvss3Score: 3},
+				},
 			},
 		},
 		{
-			in: in{
-				family: "ubuntu",
-				vinfo: VulnInfo{
-					CveID: "CVE-2017-6074",
-					CveContents: CveContents{
-						RedHat: {
-							Type:       Ubuntu,
-							SourceLink: "https://access.redhat.com/security/cve/CVE-2017-6074",
-						},
+			name: "sort JVN by cvss3, cvss2, sourceLink",
+			v: map[CveContentType][]CveContent{
+				"jvn": {
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 3,
+						SourceLink: "https://jvndb.jvn.jp/ja/contents/2023/JVNDB-2023-001210.html",
+					},
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 3,
+						SourceLink: "https://jvndb.jvn.jp/ja/contents/2021/JVNDB-2021-001210.html",
 					},
 				},
 			},
-			out: map[string]string{
-				"Ubuntu-CVE": "http://people.ubuntu.com/~ubuntu-security/cve/CVE-2017-6074",
+			want: map[CveContentType][]CveContent{
+				"jvn": {
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 3,
+						SourceLink: "https://jvndb.jvn.jp/ja/contents/2021/JVNDB-2021-001210.html",
+					},
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 3,
+						SourceLink: "https://jvndb.jvn.jp/ja/contents/2023/JVNDB-2023-001210.html",
+					},
+				},
+			},
+		},
+		{
+			name: "sort JVN by cvss3, cvss2",
+			v: map[CveContentType][]CveContent{
+				"jvn": {
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 1,
+					},
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 10,
+					},
+				},
+			},
+			want: map[CveContentType][]CveContent{
+				"jvn": {
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 10,
+					},
+					{
+						Cvss3Score: 3,
+						Cvss2Score: 1,
+					},
+				},
 			},
 		},
 	}
 	for _, tt := range tests {
-		actual := tt.in.vinfo.VendorLinks(tt.in.family)
-		for k := range tt.out {
-			if tt.out[k] != actual[k] {
-				t.Errorf("\nexpected: %s\n  actual: %s\n", tt.out[k], actual[k])
+		t.Run(tt.name, func(t *testing.T) {
+			tt.v.Sort()
+			if !reflect.DeepEqual(tt.v, tt.want) {
+				t.Errorf("\n[%s] expected: %v\n  actual: %v\n", tt.name, tt.want, tt.v)
 			}
-		}
+		})
 	}
 }

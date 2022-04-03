@@ -1,3 +1,6 @@
+//go:build !scanner
+// +build !scanner
+
 package gost
 
 import "testing"
@@ -36,9 +39,16 @@ func TestDebian_Supported(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "11 is not supported yet",
+			name: "11 is supported",
 			args: args{
 				major: "11",
+			},
+			want: true,
+		},
+		{
+			name: "12 is not supported yet",
+			args: args{
+				major: "12",
 			},
 			want: false,
 		},
@@ -53,7 +63,7 @@ func TestDebian_Supported(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deb := Debian{}
-			if got := deb.Supported(tt.args.major); got != tt.want {
+			if got := deb.supported(tt.args.major); got != tt.want {
 				t.Errorf("Debian.Supported() = %v, want %v", got, tt.want)
 			}
 		})

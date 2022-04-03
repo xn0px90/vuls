@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	. "github.com/future-architect/vuls/constant"
 )
 
 func TestSyslogConfValidate(t *testing.T) {
@@ -55,7 +57,7 @@ func TestSyslogConfValidate(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		Conf.ToSyslog = true
+		tt.conf.Enabled = true
 		errs := tt.conf.Validate()
 		if len(errs) != tt.expectedErrLength {
 			t.Errorf("test: %d, expected %d, actual %d", i, tt.expectedErrLength, len(errs))
@@ -68,6 +70,13 @@ func TestDistro_MajorVersion(t *testing.T) {
 		in  Distro
 		out int
 	}{
+		{
+			in: Distro{
+				Family:  Amazon,
+				Release: "2022 (Amazon Linux)",
+			},
+			out: 2022,
+		},
 		{
 			in: Distro{
 				Family:  Amazon,

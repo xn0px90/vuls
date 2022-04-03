@@ -287,7 +287,7 @@ func TestPackage_FormatVersionFromTo(t *testing.T) {
 				NewRelease:       tt.fields.NewRelease,
 				Arch:             tt.fields.Arch,
 				Repository:       tt.fields.Repository,
-				Changelog:        tt.fields.Changelog,
+				Changelog:        &tt.fields.Changelog,
 				AffectedProcs:    tt.fields.AffectedProcs,
 				NeedRestartProcs: tt.fields.NeedRestartProcs,
 			}
@@ -377,6 +377,53 @@ func Test_IsRaspbianPackage(t *testing.T) {
 				if !reflect.DeepEqual(ret, tt.expect[i]) {
 					t.Errorf("[%s->%s] expected: %t, actual: %t, in: %#v", tt.name, tt.in[i].name, tt.expect[i], ret, tt.in[i])
 				}
+			}
+		})
+	}
+}
+
+func Test_NewPortStat(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   string
+		expect PortStat
+	}{{
+		name: "empty",
+		args: "",
+		expect: PortStat{
+			BindAddress: "",
+			Port:        "",
+		},
+	}, {
+		name: "normal",
+		args: "127.0.0.1:22",
+		expect: PortStat{
+			BindAddress: "127.0.0.1",
+			Port:        "22",
+		},
+	}, {
+		name: "asterisk",
+		args: "*:22",
+		expect: PortStat{
+			BindAddress: "*",
+			Port:        "22",
+		},
+	}, {
+		name: "ipv6_loopback",
+		args: "[::1]:22",
+		expect: PortStat{
+			BindAddress: "[::1]",
+			Port:        "22",
+		},
+	}}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listenPort, err := NewPortStat(tt.args)
+			if err != nil {
+				t.Errorf("unexpected error occurred: %s", err)
+			} else if !reflect.DeepEqual(*listenPort, tt.expect) {
+				t.Errorf("base.NewPortStat() = %v, want %v", *listenPort, tt.expect)
 			}
 		})
 	}

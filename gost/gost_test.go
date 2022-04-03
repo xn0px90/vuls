@@ -1,3 +1,6 @@
+//go:build !scanner
+// +build !scanner
+
 package gost
 
 import (
@@ -5,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/future-architect/vuls/models"
-	gostmodels "github.com/knqyf263/gost/models"
+	gostmodels "github.com/vulsio/gost/models"
 )
 
 func TestSetPackageStates(t *testing.T) {

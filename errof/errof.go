@@ -16,6 +16,12 @@ func (e Error) Error() string {
 var (
 	// ErrFailedToAccessGithubAPI is error of github alert's api access
 	ErrFailedToAccessGithubAPI ErrorCode = "ErrFailedToAccessGithubAPI"
+
+	// ErrFailedToAccessWpScan is error of wpscan.com api access
+	ErrFailedToAccessWpScan ErrorCode = "ErrFailedToAccessWpScan"
+
+	// ErrWpScanAPILimitExceeded is error of wpscan.com api limit exceeded
+	ErrWpScanAPILimitExceeded ErrorCode = "ErrWpScanAPILimitExceeded"
 )
 
 // New :

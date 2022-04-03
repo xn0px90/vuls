@@ -10,7 +10,7 @@ import (
 
 	"github.com/future-architect/vuls/config"
 	"github.com/future-architect/vuls/models"
-	"github.com/future-architect/vuls/report"
+	"github.com/future-architect/vuls/saas"
 	"github.com/spf13/cobra"
 )
 
@@ -73,12 +73,20 @@ func main() {
 			config.Conf.Saas.GroupID = groupID
 			config.Conf.Saas.Token = token
 			config.Conf.Saas.URL = url
-			if err = (report.SaasWriter{}).Write(scanResult); err != nil {
+			if err = (saas.Writer{}).Write(scanResult); err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 				return
 			}
 			return
+		},
+	}
+	var cmdVersion = &cobra.Command{
+		Use:   "version",
+		Short: "Show version",
+		Long:  "Show version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("future-vuls-%s-%s\n", config.Version, config.Revision)
 		},
 	}
 	cmdFvulsUploader.PersistentFlags().StringVar(&serverUUID, "uuid", "", "server uuid. ENV: VULS_SERVER_UUID")
@@ -92,6 +100,7 @@ func main() {
 
 	var rootCmd = &cobra.Command{Use: "future-vuls"}
 	rootCmd.AddCommand(cmdFvulsUploader)
+	rootCmd.AddCommand(cmdVersion)
 	if err = rootCmd.Execute(); err != nil {
 		fmt.Println("Failed to execute command", err)
 	}

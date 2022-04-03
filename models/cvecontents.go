@@ -1,19 +1,34 @@
 package models
 
 import (
+	"sort"
+	"strings"
 	"time"
 
-	"github.com/aquasecurity/trivy-db/pkg/vulnsrc/vulnerability"
+	"github.com/future-architect/vuls/constant"
 )
 
 // CveContents has CveContent
-type CveContents map[CveContentType]CveContent
+type CveContents map[CveContentType][]CveContent
 
 // NewCveContents create CveContents
 func NewCveContents(conts ...CveContent) CveContents {
 	m := CveContents{}
 	for _, cont := range conts {
-		m[cont.Type] = cont
+		if cont.Type == Jvn {
+			found := false
+			for _, cveCont := range m[cont.Type] {
+				if cont.SourceLink == cveCont.SourceLink {
+					found = true
+					break
+				}
+			}
+			if !found {
+				m[cont.Type] = append(m[cont.Type], cont)
+			}
+		} else {
+			m[cont.Type] = []CveContent{cont}
+		}
 	}
 	return m
 }
@@ -42,31 +57,80 @@ func (v CveContents) Except(exceptCtypes ...CveContentType) (values CveContents)
 	return
 }
 
-// SourceLinks returns link of source
-func (v CveContents) SourceLinks(lang, myFamily, cveID string) (values []CveContentStr) {
-	if lang == "ja" {
-		if cont, found := v[Jvn]; found && 0 < len(cont.SourceLink) {
-			values = append(values, CveContentStr{Jvn, cont.SourceLink})
-		}
+// PrimarySrcURLs returns link of source
+func (v CveContents) PrimarySrcURLs(lang, myFamily, cveID string, confidences Confidences) (values []CveContentStr) {
+	if cveID == "" {
+		return
 	}
 
-	order := CveContentTypes{Nvd, NvdXML, NewCveContentType(myFamily)}
-	for _, ctype := range order {
-		if cont, found := v[ctype]; found {
-			if cont.SourceLink == "" {
-				continue
+	if conts, found := v[Nvd]; found {
+		for _, cont := range conts {
+			for _, r := range cont.References {
+				for _, t := range r.Tags {
+					if t == "Vendor Advisory" {
+						values = append(values, CveContentStr{Nvd, r.Link})
+					}
+				}
 			}
-			values = append(values, CveContentStr{ctype, cont.SourceLink})
 		}
 	}
 
-	if len(values) == 0 {
+	order := CveContentTypes{Nvd, NewCveContentType(myFamily), GitHub}
+	for _, ctype := range order {
+		if conts, found := v[ctype]; found {
+			for _, cont := range conts {
+				if cont.SourceLink == "" {
+					continue
+				}
+				values = append(values, CveContentStr{ctype, cont.SourceLink})
+			}
+		}
+	}
+
+	jvnMatch := false
+	for _, confidence := range confidences {
+		if confidence.DetectionMethod == JvnVendorProductMatchStr {
+			jvnMatch = true
+			break
+		}
+	}
+
+	if lang == "ja" || jvnMatch {
+		if conts, found := v[Jvn]; found {
+			for _, cont := range conts {
+				if 0 < len(cont.SourceLink) {
+					values = append(values, CveContentStr{Jvn, cont.SourceLink})
+				}
+			}
+		}
+	}
+
+	if len(values) == 0 && strings.HasPrefix(cveID, "CVE") {
 		return []CveContentStr{{
 			Type:  Nvd,
 			Value: "https://nvd.nist.gov/vuln/detail/" + cveID,
 		}}
 	}
 	return values
+}
+
+// PatchURLs returns link of patch
+func (v CveContents) PatchURLs() (urls []string) {
+	conts, found := v[Nvd]
+	if !found {
+		return
+	}
+
+	for _, cont := range conts {
+		for _, r := range cont.References {
+			for _, t := range r.Tags {
+				if t == "Patch" {
+					urls = append(urls, r.Link)
+				}
+			}
+		}
+	}
+	return
 }
 
 /*
@@ -99,11 +163,15 @@ func (v CveContents) Cpes(myFamily string) (values []CveContentCpes) {
 	order = append(order, AllCveContetTypes.Except(order...)...)
 
 	for _, ctype := range order {
-		if cont, found := v[ctype]; found && 0 < len(cont.Cpes) {
-			values = append(values, CveContentCpes{
-				Type:  ctype,
-				Value: cont.Cpes,
-			})
+		if conts, found := v[ctype]; found {
+			for _, cont := range conts {
+				if 0 < len(cont.Cpes) {
+					values = append(values, CveContentCpes{
+						Type:  ctype,
+						Value: cont.Cpes,
+					})
+				}
+			}
 		}
 	}
 	return
@@ -121,11 +189,15 @@ func (v CveContents) References(myFamily string) (values []CveContentRefs) {
 	order = append(order, AllCveContetTypes.Except(order...)...)
 
 	for _, ctype := range order {
-		if cont, found := v[ctype]; found && 0 < len(cont.References) {
-			values = append(values, CveContentRefs{
-				Type:  ctype,
-				Value: cont.References,
-			})
+		if conts, found := v[ctype]; found {
+			for _, cont := range conts {
+				if 0 < len(cont.References) {
+					values = append(values, CveContentRefs{
+						Type:  ctype,
+						Value: cont.References,
+					})
+				}
+			}
 		}
 	}
 
@@ -137,17 +209,21 @@ func (v CveContents) CweIDs(myFamily string) (values []CveContentStr) {
 	order := CveContentTypes{NewCveContentType(myFamily)}
 	order = append(order, AllCveContetTypes.Except(order...)...)
 	for _, ctype := range order {
-		if cont, found := v[ctype]; found && 0 < len(cont.CweIDs) {
-			for _, cweID := range cont.CweIDs {
-				for _, val := range values {
-					if val.Value == cweID {
-						continue
+		if conts, found := v[ctype]; found {
+			for _, cont := range conts {
+				if 0 < len(cont.CweIDs) {
+					for _, cweID := range cont.CweIDs {
+						for _, val := range values {
+							if val.Value == cweID {
+								continue
+							}
+						}
+						values = append(values, CveContentStr{
+							Type:  ctype,
+							Value: cweID,
+						})
 					}
 				}
-				values = append(values, CveContentStr{
-					Type:  ctype,
-					Value: cweID,
-				})
 			}
 		}
 	}
@@ -164,6 +240,47 @@ func (v CveContents) UniqCweIDs(myFamily string) (values []CveContentStr) {
 		values = append(values, cwe)
 	}
 	return values
+}
+
+// Sort elements for integration-testing
+func (v CveContents) Sort() {
+	for contType, contents := range v {
+		// CVSS3 desc, CVSS2 desc, SourceLink asc
+		sort.Slice(contents, func(i, j int) bool {
+			if contents[i].Cvss3Score > contents[j].Cvss3Score {
+				return true
+			} else if contents[i].Cvss3Score == contents[i].Cvss3Score {
+				if contents[i].Cvss2Score > contents[j].Cvss2Score {
+					return true
+				} else if contents[i].Cvss2Score == contents[i].Cvss2Score {
+					if contents[i].SourceLink < contents[j].SourceLink {
+						return true
+					}
+				}
+			}
+			return false
+		})
+		v[contType] = contents
+	}
+	for contType, contents := range v {
+		for cveID, cont := range contents {
+			sort.Slice(cont.References, func(i, j int) bool {
+				return cont.References[i].Link < cont.References[j].Link
+			})
+			sort.Slice(cont.CweIDs, func(i, j int) bool {
+				return cont.CweIDs[i] < cont.CweIDs[j]
+			})
+			for i, ref := range cont.References {
+				// sort v.CveContents[].References[].Tags
+				sort.Slice(ref.Tags, func(j, k int) bool {
+					return ref.Tags[j] < ref.Tags[k]
+				})
+				cont.References[i] = ref
+			}
+			contents[cveID] = cont
+		}
+		v[contType] = contents
+	}
 }
 
 // CveContent has abstraction of various vulnerability information
@@ -184,7 +301,6 @@ type CveContent struct {
 	CweIDs        []string          `json:"cweIDs,omitempty"`
 	Published     time.Time         `json:"published"`
 	LastModified  time.Time         `json:"lastModified"`
-	Mitigation    string            `json:"mitigation"` // RedHat API
 	Optional      map[string]string `json:"optional,omitempty"`
 }
 
@@ -199,52 +315,45 @@ type CveContentType string
 // NewCveContentType create CveContentType
 func NewCveContentType(name string) CveContentType {
 	switch name {
-	case "nvdxml":
-		return NvdXML
 	case "nvd":
 		return Nvd
 	case "jvn":
 		return Jvn
-	case "redhat", "centos":
+	case "redhat", "centos", "alma", "rocky":
 		return RedHat
+	case "fedora":
+		return Fedora
 	case "oracle":
 		return Oracle
 	case "ubuntu":
 		return Ubuntu
-	case "debian", vulnerability.DebianOVAL:
+	case "debian", "debian-oval":
 		return Debian
 	case "redhat_api":
 		return RedHatAPI
 	case "debian_security_tracker":
 		return DebianSecurityTracker
+	case "ubuntu_api":
+		return UbuntuAPI
+	case constant.OpenSUSE, constant.OpenSUSELeap, constant.SUSEEnterpriseServer, constant.SUSEEnterpriseDesktop:
+		return SUSE
 	case "microsoft":
 		return Microsoft
 	case "wordpress":
-		return WPVulnDB
+		return WpScan
 	case "amazon":
 		return Amazon
 	case "trivy":
 		return Trivy
-	// case vulnerability.NodejsSecurityWg:
-	// 	return NodeSec
-	// case vulnerability.PythonSafetyDB:
-	// 	return PythonSec
-	// case vulnerability.RustSec:
-	// 	return RustSec
-	// case vulnerability.PhpSecurityAdvisories:
-	// 	return PhpSec
-	// case vulnerability.RubySec:
-	// 	return RubySec
+	case "GitHub":
+		return Trivy
 	default:
 		return Unknown
 	}
 }
 
 const (
-	// NvdXML is NvdXML
-	NvdXML CveContentType = "nvdxml"
-
-	// Nvd is Nvd
+	// Nvd is Nvd JSON
 	Nvd CveContentType = "nvd"
 
 	// Jvn is Jvn
@@ -265,11 +374,17 @@ const (
 	// Ubuntu is Ubuntu
 	Ubuntu CveContentType = "ubuntu"
 
+	// UbuntuAPI is Ubuntu
+	UbuntuAPI CveContentType = "ubuntu_api"
+
 	// Oracle is Oracle Linux
 	Oracle CveContentType = "oracle"
 
 	// Amazon is Amazon Linux
 	Amazon CveContentType = "amazon"
+
+	// Fedora is Fedora Linux
+	Fedora CveContentType = "fedora"
 
 	// SUSE is SUSE Linux
 	SUSE CveContentType = "suse"
@@ -277,26 +392,14 @@ const (
 	// Microsoft is Microsoft
 	Microsoft CveContentType = "microsoft"
 
-	// WPVulnDB is WordPress
-	WPVulnDB CveContentType = "wpvulndb"
+	// WpScan is WordPress
+	WpScan CveContentType = "wpscan"
 
 	// Trivy is Trivy
 	Trivy CveContentType = "trivy"
 
-	// NodeSec : for JS
-	// NodeSec CveContentType = "node"
-
-	// // PythonSec : for PHP
-	// PythonSec CveContentType = "python"
-
-	// // PhpSec : for PHP
-	// PhpSec CveContentType = "php"
-
-	// // RubySec : for Ruby
-	// RubySec CveContentType = "ruby"
-
-	// // RustSec : for Rust
-	// RustSec CveContentType = "rust"
+	// GitHub is GitHub Security Alerts
+	GitHub CveContentType = "github"
 
 	// Unknown is Unknown
 	Unknown CveContentType = "unknown"
@@ -308,22 +411,19 @@ type CveContentTypes []CveContentType
 // AllCveContetTypes has all of CveContentTypes
 var AllCveContetTypes = CveContentTypes{
 	Nvd,
-	NvdXML,
 	Jvn,
 	RedHat,
 	RedHatAPI,
 	Debian,
-	Ubuntu,
-	Amazon,
-	SUSE,
 	DebianSecurityTracker,
-	WPVulnDB,
+	Ubuntu,
+	UbuntuAPI,
+	Amazon,
+	Fedora,
+	SUSE,
+	WpScan,
 	Trivy,
-	// NodeSec,
-	// PythonSec,
-	// PhpSec,
-	// RubySec,
-	// RustSec,
+	GitHub,
 }
 
 // Except returns CveContentTypes except for given args
@@ -354,7 +454,8 @@ type References []Reference
 
 // Reference has a related link of the CVE
 type Reference struct {
-	Source string `json:"source"`
-	Link   string `json:"link"`
-	RefID  string `json:"refID"`
+	Link   string   `json:"link,omitempty"`
+	Source string   `json:"source,omitempty"`
+	RefID  string   `json:"refID,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
 }

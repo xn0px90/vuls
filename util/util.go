@@ -3,10 +3,12 @@ package util
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/future-architect/vuls/config"
+	"github.com/future-architect/vuls/logging"
 )
 
 // GenWorkers generates goroutine
@@ -17,8 +19,7 @@ func GenWorkers(num int) chan<- func() {
 		go func() {
 			defer func() {
 				if p := recover(); p != nil {
-					log := NewCustomLogger(config.ServerInfo{})
-					log.Errorf("run time panic: %v", p)
+					logging.Log.Errorf("run time panic: %+v", p)
 				}
 			}()
 			for f := range tasks {
@@ -109,8 +110,16 @@ func IP() (ipv4Addrs []string, ipv6Addrs []string, err error) {
 	return ipv4Addrs, ipv6Addrs, nil
 }
 
-// ProxyEnv returns shell environment variables to set proxy
-func ProxyEnv() string {
+// PrependProxyEnv prepends proxy environment variable
+func PrependProxyEnv(cmd string) string {
+	if config.Conf.HTTPProxy == "" {
+		return cmd
+	}
+	return fmt.Sprintf("%s %s", proxyEnv(), cmd)
+}
+
+// proxyEnv returns shell environment variables to set proxy
+func proxyEnv() string {
 	httpProxyEnv := ""
 	keys := []string{
 		"http_proxy",
@@ -119,18 +128,9 @@ func ProxyEnv() string {
 		"HTTPS_PROXY",
 	}
 	for _, key := range keys {
-		httpProxyEnv += fmt.Sprintf(
-			` %s="%s"`, key, config.Conf.HTTPProxy)
+		httpProxyEnv += fmt.Sprintf(` %s="%s"`, key, config.Conf.HTTPProxy)
 	}
 	return httpProxyEnv
-}
-
-// PrependProxyEnv prepends proxy environment variable
-func PrependProxyEnv(cmd string) string {
-	if len(config.Conf.HTTPProxy) == 0 {
-		return cmd
-	}
-	return fmt.Sprintf("%s %s", ProxyEnv(), cmd)
 }
 
 //  func unixtime(s string) (time.Time, error) {
@@ -162,4 +162,35 @@ func Distinct(ss []string) (distincted []string) {
 		}
 	}
 	return
+}
+
+// Major return the major version of the given semantic version
+func Major(version string) string {
+	if version == "" {
+		return ""
+	}
+	ss := strings.SplitN(version, ":", 2)
+	ver := ""
+	if len(ss) == 1 {
+		ver = ss[0]
+	} else {
+		ver = ss[1]
+	}
+	return strings.Split(ver, ".")[0]
+}
+
+// GetHTTPClient return http.Client
+func GetHTTPClient(proxy string) (*http.Client, error) {
+	if proxy != "" {
+		proxyURL, err := url.Parse(proxy)
+		if err != nil {
+			return nil, err
+		}
+		return &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			},
+		}, nil
+	}
+	return &http.Client{}, nil
 }

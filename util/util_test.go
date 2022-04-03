@@ -69,7 +69,7 @@ func TestUrlJoin(t *testing.T) {
 		paths := tt.in[1:]
 		actual, err := URLPathJoin(baseurl, paths...)
 		if err != nil {
-			t.Errorf("\nunexpected error occurred, err: %s,\ninput:%#v\nexpected: %s\n  actual: %s", err, tt.in, tt.out, actual)
+			t.Errorf("\nunexpected error occurred, err: %+v,\ninput:%#v\nexpected: %s\n  actual: %s", err, tt.in, tt.out, actual)
 		}
 		if actual != tt.out {
 			t.Errorf("\ninput:%#v\nexpected: %s\n  actual: %s", tt.in, tt.out, actual)
@@ -151,6 +151,36 @@ func TestTruncate(t *testing.T) {
 		actual := Truncate(tt.in, tt.length)
 		if actual != tt.out {
 			t.Errorf("\nexpected: %s\n  actual: %s", tt.out, actual)
+		}
+	}
+}
+
+func Test_major(t *testing.T) {
+	var tests = []struct {
+		in       string
+		expected string
+	}{
+		{
+			in:       "",
+			expected: "",
+		},
+		{
+			in:       "4",
+			expected: "4",
+		},
+		{
+			in:       "4.1",
+			expected: "4",
+		},
+		{
+			in:       "0:4.1",
+			expected: "4",
+		},
+	}
+	for i, tt := range tests {
+		a := Major(tt.in)
+		if tt.expected != a {
+			t.Errorf("[%d]\nexpected: %s\n  actual: %s\n", i, tt.expected, a)
 		}
 	}
 }
