@@ -1,15 +1,14 @@
 package models
 
 import (
-	"path/filepath"
-
 	"github.com/aquasecurity/trivy-db/pkg/db"
 	trivyDBTypes "github.com/aquasecurity/trivy-db/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/detector/library"
-	"github.com/future-architect/vuls/logging"
-
+	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 	"golang.org/x/xerrors"
+
+	"github.com/future-architect/vuls/logging"
 )
 
 // LibraryScanners is an array of LibraryScanner
@@ -60,11 +59,11 @@ type Library struct {
 func (s LibraryScanner) Scan() ([]VulnInfo, error) {
 	scanner, err := library.NewDriver(s.Type)
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to new a library driver: %w", err)
+		return nil, xerrors.Errorf("Failed to new a library driver %s: %w", s.Type, err)
 	}
 	var vulnerabilities = []VulnInfo{}
 	for _, pkg := range s.Libs {
-		tvulns, err := scanner.DetectVulnerabilities(pkg.Name, pkg.Version)
+		tvulns, err := scanner.DetectVulnerabilities("", pkg.Name, pkg.Version)
 		if err != nil {
 			return nil, xerrors.Errorf("failed to detect %s vulnerabilities: %w", scanner.Type(), err)
 		}
@@ -130,34 +129,52 @@ func getCveContents(cveID string, vul trivyDBTypes.Vulnerability) (contents map[
 	return contents
 }
 
-// LibraryMap is filename and library type
-var LibraryMap = map[string]string{
-	"package-lock.json":  "node",
-	"yarn.lock":          "node",
-	"Gemfile.lock":       "ruby",
-	"Cargo.lock":         "rust",
-	"composer.lock":      "php",
-	"requirements.txt":   "python",
-	"Pipfile.lock":       "python",
-	"poetry.lock":        "python",
-	"packages.lock.json": ".net",
-	"packages.config":    ".net",
-	"go.sum":             "gomod",
-	"pom.xml":            "java",
-	"*.jar":              "java",
-	"*.war":              "java",
-	"*.ear":              "java",
-	"*.par":              "java",
+// FindLockFiles is a list of filenames that is the target of findLock
+var FindLockFiles = []string{
+	// node
+	ftypes.NpmPkgLock, ftypes.YarnLock, ftypes.PnpmLock,
+	// ruby
+	ftypes.GemfileLock,
+	// rust
+	ftypes.CargoLock,
+	// php
+	ftypes.ComposerLock,
+	// python
+	ftypes.PipRequirements, ftypes.PipfileLock, ftypes.PoetryLock,
+	// .net
+	ftypes.NuGetPkgsLock, ftypes.NuGetPkgsConfig, "*.deps.json",
+	// gomod
+	ftypes.GoMod, ftypes.GoSum,
+	// java
+	ftypes.MavenPom, "*.jar", "*.war", "*.ear", "*.par", "*gradle.lockfile",
+	// C / C++
+	ftypes.ConanLock,
 }
 
 // GetLibraryKey returns target library key
 func (s LibraryScanner) GetLibraryKey() string {
-	fileName := filepath.Base(s.LockfilePath)
 	switch s.Type {
-	case "jar", "war", "ear", "par":
+	case ftypes.Bundler, ftypes.GemSpec:
+		return "ruby"
+	case ftypes.Cargo:
+		return "rust"
+	case ftypes.Composer:
+		return "php"
+	case ftypes.GoBinary, ftypes.GoModule:
+		return "gomod"
+	case ftypes.Jar, ftypes.Pom, ftypes.Gradle:
 		return "java"
+	case ftypes.Npm, ftypes.Yarn, ftypes.Pnpm, ftypes.NodePkg, ftypes.JavaScript:
+		return "node"
+	case ftypes.NuGet, ftypes.DotNetCore:
+		return ".net"
+	case ftypes.Pipenv, ftypes.Poetry, ftypes.Pip, ftypes.PythonPkg:
+		return "python"
+	case ftypes.ConanLock:
+		return "c"
+	default:
+		return ""
 	}
-	return LibraryMap[fileName]
 }
 
 // LibraryFixedIn has library fixed information

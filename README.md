@@ -9,8 +9,8 @@
 
 ![Vuls-logo](img/vuls_logo.png)
 
-Vulnerability scanner for Linux/FreeBSD, agent-less, written in Go.
-We have a slack team. [Join slack team](http://goo.gl/forms/xm5KFo35tu)
+Vulnerability scanner for Linux/FreeBSD, agent-less, written in Go.  
+We have a slack team. [Join slack team](https://join.slack.com/t/vuls-github/shared_invite/zt-1fculjwj4-6nex2JNE7DpOSiKZ1ztDFw)  
 Twitter: [@vuls_en](https://twitter.com/vuls_en)
 
 ![Vuls-Abstract](img/vuls-abstract.png)
@@ -91,12 +91,11 @@ Vuls is a tool created to solve the problems listed above. It has the following 
 - CISA(Cybersecurity & Infrastructure Security Agency)
   - [Known Exploited Vulnerabilities Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
 
+- Cyber Threat Intelligence(MITRE ATT&CK and CAPEC)
+  - [mitre/cti](https://github.com/mitre/cti)
+
 - Libraries
-  - [Node.js Security Working Group](https://github.com/nodejs/security-wg)
-  - [Ruby Advisory Database](https://github.com/rubysec/ruby-advisory-db)
-  - [Safety DB(Python)](https://github.com/pyupio/safety-db)
-  - [PHP Security Advisories Database](https://github.com/FriendsOfPHP/security-advisories)
-  - [RustSec Advisory Database](https://github.com/RustSec/advisory-db)
+  - [aquasecurity/vuln-list](https://github.com/aquasecurity/vuln-list)
 
 - WordPress
   - [wpscan](https://wpscan.com/api)

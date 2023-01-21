@@ -203,8 +203,9 @@ var redisTrivy = []byte(`
 `)
 var redisSR = &models.ScanResult{
 	JSONVersion: 4,
-	ServerName:  "redis (debian 10.10)",
+	ServerName:  "redis:latest",
 	Family:      "debian",
+	Release:     "10.10",
 	ScannedBy:   "trivy",
 	ScannedVia:  "trivy",
 	ScannedCves: models.VulnInfos{
@@ -263,7 +264,8 @@ var redisSR = &models.ScanResult{
 		},
 	},
 	Optional: map[string]interface{}{
-		"trivy-target": "redis (debian 10.10)",
+		"TRIVY_IMAGE_NAME": "redis",
+		"TRIVY_IMAGE_TAG":  "latest",
 	},
 }
 
@@ -373,7 +375,7 @@ var strutsTrivy = []byte(`
 
 var strutsSR = &models.ScanResult{
 	JSONVersion: 4,
-	ServerName:  "library scan by trivy",
+	ServerName:  "/data/struts-1.2.7/lib",
 	Family:      "pseudo",
 	ScannedBy:   "trivy",
 	ScannedVia:  "trivy",
@@ -459,9 +461,7 @@ var strutsSR = &models.ScanResult{
 	},
 	Packages:    models.Packages{},
 	SrcPackages: models.SrcPackages{},
-	Optional: map[string]interface{}{
-		"trivy-target": "Java",
-	},
+	Optional:    nil,
 }
 
 var osAndLibTrivy = []byte(`
@@ -633,8 +633,9 @@ var osAndLibTrivy = []byte(`
 
 var osAndLibSR = &models.ScanResult{
 	JSONVersion: 4,
-	ServerName:  "quay.io/fluentd_elasticsearch/fluentd:v2.9.0 (debian 10.2)",
+	ServerName:  "quay.io/fluentd_elasticsearch/fluentd:v2.9.0",
 	Family:      "debian",
+	Release:     "10.2",
 	ScannedBy:   "trivy",
 	ScannedVia:  "trivy",
 	ScannedCves: models.VulnInfos{
@@ -721,7 +722,8 @@ var osAndLibSR = &models.ScanResult{
 		},
 	},
 	Optional: map[string]interface{}{
-		"trivy-target": "quay.io/fluentd_elasticsearch/fluentd:v2.9.0 (debian 10.2)",
+		"TRIVY_IMAGE_NAME": "quay.io/fluentd_elasticsearch/fluentd",
+		"TRIVY_IMAGE_TAG":  "v2.9.0",
 	},
 }
 

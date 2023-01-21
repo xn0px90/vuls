@@ -6,7 +6,7 @@ package detector
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,12 +26,7 @@ func reuseScannedCves(r *models.ScanResult) bool {
 	case constant.FreeBSD, constant.Raspbian:
 		return true
 	}
-	return isTrivyResult(r)
-}
-
-func isTrivyResult(r *models.ScanResult) bool {
-	_, ok := r.Optional["trivy-target"]
-	return ok
+	return r.ScannedBy == "trivy"
 }
 
 func needToRefreshCve(r models.ScanResult) bool {
@@ -130,7 +125,7 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 		previousCveIDsSet[previousVulnInfo.CveID] = true
 	}
 
-	new := models.VulnInfos{}
+	newer := models.VulnInfos{}
 	updated := models.VulnInfos{}
 	for _, v := range current.ScannedCves {
 		if previousCveIDsSet[v.CveID] {
@@ -150,17 +145,17 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 				logging.Log.Debugf("same: %s", v.CveID)
 			}
 		} else {
-			logging.Log.Debugf("new: %s", v.CveID)
+			logging.Log.Debugf("newer: %s", v.CveID)
 			v.DiffStatus = models.DiffPlus
-			new[v.CveID] = v
+			newer[v.CveID] = v
 		}
 	}
 
-	if len(updated) == 0 && len(new) == 0 {
+	if len(updated) == 0 && len(newer) == 0 {
 		logging.Log.Infof("%s: There are %d vulnerabilities, but no difference between current result and previous one.", current.FormatServerName(), len(current.ScannedCves))
 	}
 
-	for cveID, vuln := range new {
+	for cveID, vuln := range newer {
 		updated[cveID] = vuln
 	}
 	return updated
@@ -239,8 +234,8 @@ var jsonDirPattern = regexp.MustCompile(
 // ListValidJSONDirs returns valid json directory as array
 // Returned array is sorted so that recent directories are at the head
 func ListValidJSONDirs(resultsDir string) (dirs []string, err error) {
-	var dirInfo []os.FileInfo
-	if dirInfo, err = ioutil.ReadDir(resultsDir); err != nil {
+	var dirInfo []fs.DirEntry
+	if dirInfo, err = os.ReadDir(resultsDir); err != nil {
 		err = xerrors.Errorf("Failed to read %s: %w",
 			config.Conf.ResultsDir, err)
 		return
@@ -263,7 +258,7 @@ func loadOneServerScanResult(jsonFile string) (*models.ScanResult, error) {
 		data []byte
 		err  error
 	)
-	if data, err = ioutil.ReadFile(jsonFile); err != nil {
+	if data, err = os.ReadFile(jsonFile); err != nil {
 		return nil, xerrors.Errorf("Failed to read %s: %w", jsonFile, err)
 	}
 	result := &models.ScanResult{}

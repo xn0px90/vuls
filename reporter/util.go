@@ -5,7 +5,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,10 +16,12 @@ import (
 	"time"
 
 	"github.com/future-architect/vuls/config"
+	"github.com/future-architect/vuls/cti"
 	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/models"
 	"github.com/gosuri/uitable"
 	"github.com/olekukonko/tablewriter"
+	"golang.org/x/exp/slices"
 	"golang.org/x/xerrors"
 )
 
@@ -40,8 +43,8 @@ func OverwriteJSONFile(dir string, r models.ScanResult) error {
 
 // LoadScanResults read JSON data
 func LoadScanResults(jsonDir string) (results models.ScanResults, err error) {
-	var files []os.FileInfo
-	if files, err = ioutil.ReadDir(jsonDir); err != nil {
+	var files []fs.DirEntry
+	if files, err = os.ReadDir(jsonDir); err != nil {
 		return nil, xerrors.Errorf("Failed to read %s: %w", jsonDir, err)
 	}
 	for _, f := range files {
@@ -68,7 +71,7 @@ func loadOneServerScanResult(jsonFile string) (*models.ScanResult, error) {
 		data []byte
 		err  error
 	)
-	if data, err = ioutil.ReadFile(jsonFile); err != nil {
+	if data, err = os.ReadFile(jsonFile); err != nil {
 		return nil, xerrors.Errorf("Failed to read %s: %w", jsonFile, err)
 	}
 	result := &models.ScanResult{}
@@ -87,8 +90,8 @@ var jsonDirPattern = regexp.MustCompile(
 // ListValidJSONDirs returns valid json directory as array
 // Returned array is sorted so that recent directories are at the head
 func ListValidJSONDirs(resultsDir string) (dirs []string, err error) {
-	var dirInfo []os.FileInfo
-	if dirInfo, err = ioutil.ReadDir(resultsDir); err != nil {
+	var dirInfo []fs.DirEntry
+	if dirInfo, err = os.ReadDir(resultsDir); err != nil {
 		err = xerrors.Errorf("Failed to read %s: %w", resultsDir, err)
 		return
 	}
@@ -128,7 +131,7 @@ func JSONDir(resultsDir string, args []string) (path string, err error) {
 
 	// TODO remove Pipe flag
 	if config.Conf.Pipe {
-		bytes, err := ioutil.ReadAll(os.Stdin)
+		bytes, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return "", xerrors.Errorf("Failed to read stdin: %w", err)
 		}
@@ -401,7 +404,7 @@ No CVE-IDs are found in updatable packages.
 		}
 
 		for _, alert := range vuln.GitHubSecurityAlerts {
-			data = append(data, []string{"GitHub", alert.PackageName})
+			data = append(data, []string{"GitHub", alert.RepoURLPackageName()})
 		}
 
 		for _, wp := range vuln.WpPackageFixStats {
@@ -432,31 +435,42 @@ No CVE-IDs are found in updatable packages.
 			data = append(data, []string{"Confidence", confidence.String()})
 		}
 
-		cweURLs, top10URLs := []string{}, []string{}
-		cweTop25URLs, sansTop25URLs := []string{}, []string{}
+		cweURLs, top10URLs, cweTop25URLs, sansTop25URLs := []string{}, map[string][]string{}, map[string][]string{}, map[string][]string{}
 		for _, v := range vuln.CveContents.UniqCweIDs(r.Family) {
-			name, url, top10Rank, top10URL, cweTop25Rank, cweTop25URL, sansTop25Rank, sansTop25URL := r.CweDict.Get(v.Value, r.Lang)
-			if top10Rank != "" {
-				data = append(data, []string{"CWE",
-					fmt.Sprintf("[OWASP Top%s] %s: %s (%s)",
-						top10Rank, v.Value, name, v.Type)})
-				top10URLs = append(top10URLs, top10URL)
+			name, url, owasp, cwe25, sans := r.CweDict.Get(v.Value, r.Lang)
+
+			ds := [][]string{}
+			for year, info := range owasp {
+				ds = append(ds, []string{"CWE", fmt.Sprintf("[OWASP(%s) Top%s] %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
+				top10URLs[year] = append(top10URLs[year], info.URL)
 			}
-			if cweTop25Rank != "" {
-				data = append(data, []string{"CWE",
-					fmt.Sprintf("[CWE Top%s] %s: %s (%s)",
-						cweTop25Rank, v.Value, name, v.Type)})
-				cweTop25URLs = append(cweTop25URLs, cweTop25URL)
+			slices.SortFunc(ds, func(a, b []string) bool {
+				return a[1] < b[1]
+			})
+			data = append(data, ds...)
+
+			ds = [][]string{}
+			for year, info := range cwe25 {
+				ds = append(ds, []string{"CWE", fmt.Sprintf("[CWE(%s) Top%s] %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
+				cweTop25URLs[year] = append(cweTop25URLs[year], info.URL)
 			}
-			if sansTop25Rank != "" {
-				data = append(data, []string{"CWE",
-					fmt.Sprintf("[CWE/SANS Top%s]  %s: %s (%s)",
-						sansTop25Rank, v.Value, name, v.Type)})
-				sansTop25URLs = append(sansTop25URLs, sansTop25URL)
+			slices.SortFunc(ds, func(a, b []string) bool {
+				return a[1] < b[1]
+			})
+			data = append(data, ds...)
+
+			ds = [][]string{}
+			for year, info := range sans {
+				ds = append(ds, []string{"CWE", fmt.Sprintf("[CWE/SANS(%s) Top%s]  %s: %s (%s)", year, info.Rank, v.Value, name, v.Type)})
+				sansTop25URLs[year] = append(sansTop25URLs[year], info.URL)
 			}
-			if top10Rank == "" && cweTop25Rank == "" && sansTop25Rank == "" {
-				data = append(data, []string{"CWE", fmt.Sprintf("%s: %s (%s)",
-					v.Value, name, v.Type)})
+			slices.SortFunc(ds, func(a, b []string) bool {
+				return a[1] < b[1]
+			})
+			data = append(data, ds...)
+
+			if len(owasp) == 0 && len(cwe25) == 0 && len(sans) == 0 {
+				data = append(data, []string{"CWE", fmt.Sprintf("%s: %s (%s)", v.Value, name, v.Type)})
 			}
 			cweURLs = append(cweURLs, url)
 		}
@@ -474,15 +488,34 @@ No CVE-IDs are found in updatable packages.
 			m[exploit.URL] = struct{}{}
 		}
 
-		for _, url := range top10URLs {
-			data = append(data, []string{"OWASP Top10", url})
+		for year, urls := range top10URLs {
+			ds := [][]string{}
+			for _, url := range urls {
+				ds = append(ds, []string{fmt.Sprintf("OWASP(%s) Top10", year), url})
+			}
+			slices.SortFunc(ds, func(a, b []string) bool {
+				return a[0] < b[0]
+			})
+			data = append(data, ds...)
 		}
-		if len(cweTop25URLs) != 0 {
-			data = append(data, []string{"CWE Top25", cweTop25URLs[0]})
+
+		ds := [][]string{}
+		for year, urls := range cweTop25URLs {
+			ds = append(ds, []string{fmt.Sprintf("CWE(%s) Top25", year), urls[0]})
 		}
-		if len(sansTop25URLs) != 0 {
-			data = append(data, []string{"SANS/CWE Top25", sansTop25URLs[0]})
+		slices.SortFunc(ds, func(a, b []string) bool {
+			return a[0] < b[0]
+		})
+		data = append(data, ds...)
+
+		ds = [][]string{}
+		for year, urls := range sansTop25URLs {
+			ds = append(ds, []string{fmt.Sprintf("SANS/CWE(%s) Top25", year), urls[0]})
 		}
+		slices.SortFunc(ds, func(a, b []string) bool {
+			return a[0] < b[0]
+		})
+		data = append(data, ds...)
 
 		for _, alert := range vuln.AlertDict.CISA {
 			data = append(data, []string{"CISA Alert", alert.URL})
@@ -494,6 +527,22 @@ No CVE-IDs are found in updatable packages.
 
 		for _, alert := range vuln.AlertDict.USCERT {
 			data = append(data, []string{"US-CERT Alert", alert.URL})
+		}
+
+		attacks := []string{}
+		for _, techniqueID := range vuln.Ctis {
+			if strings.HasPrefix(techniqueID, "CAPEC-") {
+				continue
+			}
+			technique, ok := cti.TechniqueDict[techniqueID]
+			if !ok {
+				continue
+			}
+			attacks = append(attacks, technique.Name)
+		}
+		slices.Sort(attacks)
+		for _, attack := range attacks {
+			data = append(data, []string{"MITER ATT&CK", attack})
 		}
 
 		// for _, rr := range vuln.CveContents.References(r.Family) {
@@ -623,7 +672,7 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 		previousCveIDsSet[previousVulnInfo.CveID] = true
 	}
 
-	new := models.VulnInfos{}
+	newer := models.VulnInfos{}
 	updated := models.VulnInfos{}
 	for _, v := range current.ScannedCves {
 		if previousCveIDsSet[v.CveID] {
@@ -643,17 +692,17 @@ func getPlusDiffCves(previous, current models.ScanResult) models.VulnInfos {
 				logging.Log.Debugf("same: %s", v.CveID)
 			}
 		} else {
-			logging.Log.Debugf("new: %s", v.CveID)
+			logging.Log.Debugf("newer: %s", v.CveID)
 			v.DiffStatus = models.DiffPlus
-			new[v.CveID] = v
+			newer[v.CveID] = v
 		}
 	}
 
-	if len(updated) == 0 && len(new) == 0 {
+	if len(updated) == 0 && len(newer) == 0 {
 		logging.Log.Infof("%s: There are %d vulnerabilities, but no difference between current result and previous one.", current.FormatServerName(), len(current.ScannedCves))
 	}
 
-	for cveID, vuln := range new {
+	for cveID, vuln := range newer {
 		updated[cveID] = vuln
 	}
 	return updated

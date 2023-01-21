@@ -108,6 +108,11 @@ func printConfigToml(ips []string) (err error) {
 #sqlite3Path = "/path/to/go-kev.sqlite3"
 #url        = ""
 
+[cti]
+#type = ["sqlite3", "mysql", "postgres", "redis", "http" ]
+#sqlite3Path = "/path/to/go-cti.sqlite3"
+#url        = ""
+
 # https://vuls.io/docs/en/config.toml.html#slack-section
 #[slack]
 #hookURL      = "https://hooks.slack.com/services/abc123/defghijklmnopqrstuvwxyz"
@@ -201,6 +206,7 @@ func printConfigToml(ips []string) (err error) {
 {{range $i, $ip := .IPs}}
 [servers.{{index $names $i}}]
 host                = "{{$ip}}"
+#ignoreIPAddresses  = ["{{$ip}}"]
 #port               = "22"
 #user               = "root"
 #sshConfigPath		= "/home/username/.ssh/config"
@@ -210,6 +216,7 @@ host                = "{{$ip}}"
 #type               = "pseudo"
 #memo               = "DB Server"
 #findLock = true
+#findLockDirs = [ "/path/to/prject/lib" ]
 #lockfiles = ["/path/to/package-lock.json"]
 #cpeNames           = [ "cpe:/a:rubyonrails:ruby_on_rails:4.2.1" ]
 #owaspDCXMLPath     = "/path/to/dependency-check-report.xml"

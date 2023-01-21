@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/boltdb/bolt"
+	bolt "go.etcd.io/bbolt"
+	"golang.org/x/xerrors"
+
 	"github.com/future-architect/vuls/logging"
 	"github.com/future-architect/vuls/util"
-	"golang.org/x/xerrors"
 )
 
 // Bolt holds a pointer of bolt.DB
@@ -47,7 +48,7 @@ func (b Bolt) Close() error {
 	return b.db.Close()
 }
 
-//  CreateBucketIfNotExists creates a bucket that is specified by arg.
+// CreateBucketIfNotExists creates a bucket that is specified by arg.
 func (b *Bolt) createBucketIfNotExists(name string) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists([]byte(name))

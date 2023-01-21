@@ -2,6 +2,8 @@ package v2
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/aquasecurity/trivy/pkg/types"
@@ -34,35 +36,44 @@ func (p ParserV2) Parse(vulnJSON []byte) (result *models.ScanResult, err error) 
 	return scanResult, nil
 }
 
-func setScanResultMeta(scanResult *models.ScanResult, report *types.Report) error {
-	const trivyTarget = "trivy-target"
-	for _, r := range report.Results {
-		if pkg.IsTrivySupportedOS(r.Type) {
-			scanResult.Family = r.Type
-			scanResult.ServerName = r.Target
-			scanResult.Optional = map[string]interface{}{
-				trivyTarget: r.Target,
-			}
-		} else if pkg.IsTrivySupportedLib(r.Type) {
-			if scanResult.Family == "" {
-				scanResult.Family = constant.ServerTypePseudo
-			}
-			if scanResult.ServerName == "" {
-				scanResult.ServerName = "library scan by trivy"
-			}
-			if _, ok := scanResult.Optional[trivyTarget]; !ok {
-				scanResult.Optional = map[string]interface{}{
-					trivyTarget: r.Target,
-				}
-			}
-		}
-		scanResult.ScannedAt = time.Now()
-		scanResult.ScannedBy = "trivy"
-		scanResult.ScannedVia = "trivy"
-	}
+var dockerTagPattern = regexp.MustCompile(`^(.*):(.*)$`)
 
-	if _, ok := scanResult.Optional[trivyTarget]; !ok {
+func setScanResultMeta(scanResult *models.ScanResult, report *types.Report) error {
+	if len(report.Results) == 0 {
 		return xerrors.Errorf("scanned images or libraries are not supported by Trivy. see https://aquasecurity.github.io/trivy/dev/vulnerability/detection/os/, https://aquasecurity.github.io/trivy/dev/vulnerability/detection/language/")
 	}
+
+	scanResult.ServerName = report.ArtifactName
+	if report.ArtifactType == "container_image" {
+		matches := dockerTagPattern.FindStringSubmatch(report.ArtifactName)
+		var imageName, imageTag string
+		if 2 < len(matches) {
+			// including the image tag
+			imageName = matches[1]
+			imageTag = matches[2]
+		} else {
+			// no image tag
+			imageName = report.ArtifactName
+			imageTag = "latest" // Complement if the tag is omitted
+		}
+		scanResult.ServerName = fmt.Sprintf("%s:%s", imageName, imageTag)
+		if scanResult.Optional == nil {
+			scanResult.Optional = map[string]interface{}{}
+		}
+		scanResult.Optional["TRIVY_IMAGE_NAME"] = imageName
+		scanResult.Optional["TRIVY_IMAGE_TAG"] = imageTag
+	}
+
+	if report.Metadata.OS != nil {
+		scanResult.Family = report.Metadata.OS.Family
+		scanResult.Release = report.Metadata.OS.Name
+	} else {
+		scanResult.Family = constant.ServerTypePseudo
+	}
+
+	scanResult.ScannedAt = time.Now()
+	scanResult.ScannedBy = "trivy"
+	scanResult.ScannedVia = "trivy"
+
 	return nil
 }

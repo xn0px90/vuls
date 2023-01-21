@@ -256,11 +256,12 @@ type VulnInfo struct {
 	CveID                string               `json:"cveID,omitempty"`
 	Confidences          Confidences          `json:"confidences,omitempty"`
 	AffectedPackages     PackageFixStatuses   `json:"affectedPackages,omitempty"`
-	DistroAdvisories     DistroAdvisories     `json:"distroAdvisories,omitempty"` // for Amazon, RHEL, Fedora, FreeBSD
+	DistroAdvisories     DistroAdvisories     `json:"distroAdvisories,omitempty"` // for Amazon, RHEL, Fedora, FreeBSD, Microsoft
 	CveContents          CveContents          `json:"cveContents,omitempty"`
 	Exploits             []Exploit            `json:"exploits,omitempty"`
 	Metasploits          []Metasploit         `json:"metasploits,omitempty"`
 	Mitigations          []Mitigation         `json:"mitigations,omitempty"`
+	Ctis                 []string             `json:"ctis,omitempty"`
 	AlertDict            AlertDict            `json:"alertDict,omitempty"`
 	CpeURIs              []string             `json:"cpeURIs,omitempty"` // CpeURIs related to this CVE defined in config.toml
 	GitHubSecurityAlerts GitHubSecurityAlerts `json:"gitHubSecurityAlerts,omitempty"`
@@ -283,7 +284,7 @@ type GitHubSecurityAlerts []GitHubSecurityAlert
 // Add adds given arg to the slice and return the slice (immutable)
 func (g GitHubSecurityAlerts) Add(alert GitHubSecurityAlert) GitHubSecurityAlerts {
 	for _, a := range g {
-		if a.PackageName == alert.PackageName {
+		if a.RepoURLPackageName() == alert.RepoURLPackageName() {
 			return g
 		}
 	}
@@ -293,19 +294,34 @@ func (g GitHubSecurityAlerts) Add(alert GitHubSecurityAlert) GitHubSecurityAlert
 // Names return a slice of lib names
 func (g GitHubSecurityAlerts) Names() (names []string) {
 	for _, a := range g {
-		names = append(names, a.PackageName)
+		names = append(names, a.RepoURLPackageName())
 	}
 	return names
 }
 
 // GitHubSecurityAlert has detected CVE-ID, PackageName, Status fetched via GitHub API
 type GitHubSecurityAlert struct {
-	PackageName   string    `json:"packageName"`
-	FixedIn       string    `json:"fixedIn"`
-	AffectedRange string    `json:"affectedRange"`
-	Dismissed     bool      `json:"dismissed"`
-	DismissedAt   time.Time `json:"dismissedAt"`
-	DismissReason string    `json:"dismissReason"`
+	// TODO: PackageName deprecated. it will be removed next time.
+	PackageName   string               `json:"packageName"`
+	Repository    string               `json:"repository"`
+	Package       GSAVulnerablePackage `json:"package,omitempty"`
+	FixedIn       string               `json:"fixedIn"`
+	AffectedRange string               `json:"affectedRange"`
+	Dismissed     bool                 `json:"dismissed"`
+	DismissedAt   time.Time            `json:"dismissedAt"`
+	DismissReason string               `json:"dismissReason"`
+}
+
+func (a GitHubSecurityAlert) RepoURLPackageName() string {
+	return fmt.Sprintf("%s %s", a.Repository, a.Package.Name)
+}
+
+type GSAVulnerablePackage struct {
+	Name             string `json:"name"`
+	Ecosystem        string `json:"ecosystem"`
+	ManifestFilename string `json:"manifestFilename"`
+	ManifestPath     string `json:"manifestPath"`
+	Requirements     string `json:"requirements"`
 }
 
 // LibraryFixedIns is a list of Library's FixedIn
@@ -903,6 +919,9 @@ const (
 	// UbuntuAPIMatchStr :
 	UbuntuAPIMatchStr = "UbuntuAPIMatch"
 
+	// WindowsUpdateSearchStr :
+	WindowsUpdateSearchStr = "WindowsUpdateSearch"
+
 	// TrivyMatchStr :
 	TrivyMatchStr = "TrivyMatch"
 
@@ -940,6 +959,9 @@ var (
 
 	// UbuntuAPIMatch ranking how confident the CVE-ID was detected correctly
 	UbuntuAPIMatch = Confidence{100, UbuntuAPIMatchStr, 0}
+
+	// WindowsUpdateSearch ranking how confident the CVE-ID was detected correctly
+	WindowsUpdateSearch = Confidence{100, WindowsUpdateSearchStr, 0}
 
 	// TrivyMatch ranking how confident the CVE-ID was detected correctly
 	TrivyMatch = Confidence{100, TrivyMatchStr, 0}

@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +15,7 @@ import (
 	formatter "github.com/kotakanbe/logrus-prefixed-formatter"
 )
 
-//LogOpts has options for logging
+// LogOpts has options for logging
 type LogOpts struct {
 	Debug     bool   `json:"debug,omitempty"`
 	DebugSQL  bool   `json:"debugSQL,omitempty"`
@@ -36,7 +35,7 @@ type Logger struct {
 
 func init() {
 	log := logrus.New()
-	log.Out = ioutil.Discard
+	log.Out = io.Discard
 	fields := logrus.Fields{"prefix": ""}
 	Log = Logger{Entry: *log.WithFields(fields)}
 }
@@ -44,6 +43,13 @@ func init() {
 // NewNormalLogger creates normal logger
 func NewNormalLogger() Logger {
 	return Logger{Entry: logrus.Entry{Logger: logrus.New()}}
+}
+
+// NewIODiscardLogger creates discard logger
+func NewIODiscardLogger() Logger {
+	l := logrus.New()
+	l.Out = io.Discard
+	return Logger{Entry: logrus.Entry{Logger: l}}
 }
 
 // NewCustomLogger creates logrus
@@ -101,7 +107,7 @@ func NewCustomLogger(debug, quiet, logToFile bool, logDir, logMsgAnsiColor, serv
 			}
 		}
 	} else if quiet {
-		log.Out = ioutil.Discard
+		log.Out = io.Discard
 	} else {
 		log.Out = os.Stderr
 	}

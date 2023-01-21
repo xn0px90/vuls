@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -47,6 +47,7 @@ func (w Writer) Write(rs ...models.ScanResult) error {
 	if len(rs) == 0 {
 		return nil
 	}
+	tags := strings.Split(os.Getenv("VULS_TAGS"), ",")
 
 	ipv4s, ipv6s, err := util.IP()
 	if err != nil {
@@ -88,7 +89,7 @@ func (w Writer) Write(rs ...models.ScanResult) error {
 		return xerrors.Errorf("Failed to get Credential. Request JSON : %s,", string(body))
 	}
 
-	t, err := ioutil.ReadAll(resp.Body)
+	t, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -111,6 +112,13 @@ func (w Writer) Write(rs ...models.ScanResult) error {
 
 	svc := s3.New(sess)
 	for _, r := range rs {
+		if 0 < len(tags) {
+			if r.Optional == nil {
+				r.Optional = map[string]interface{}{}
+			}
+			r.Optional["VULS_TAGS"] = tags
+		}
+
 		b, err := json.Marshal(r)
 		if err != nil {
 			return xerrors.Errorf("Failed to Marshal to JSON: %w", err)

@@ -21,7 +21,7 @@ var Revision string
 // Conf has Configuration
 var Conf Config
 
-//Config is struct of Configuration
+// Config is struct of Configuration
 type Config struct {
 	logging.LogOpts
 
@@ -42,6 +42,7 @@ type Config struct {
 	Exploit    ExploitConf    `json:"exploit,omitempty"`
 	Metasploit MetasploitConf `json:"metasploit,omitempty"`
 	KEVuln     KEVulnConf     `json:"kevuln,omitempty"`
+	Cti        CtiConf        `json:"cti,omitempty"`
 
 	Slack      SlackConf      `json:"-"`
 	EMail      SMTPConf       `json:"-"`
@@ -178,6 +179,7 @@ func (c *Config) ValidateOnReport() bool {
 		&Conf.Exploit,
 		&Conf.Metasploit,
 		&Conf.KEVuln,
+		&Conf.Cti,
 	} {
 		if err := cnf.Validate(); err != nil {
 			errs = append(errs, xerrors.Errorf("Failed to validate %s: %+v", cnf.GetName(), err))
@@ -211,9 +213,11 @@ type WpScanConf struct {
 
 // ServerInfo has SSH Info, additional CPE packages to scan.
 type ServerInfo struct {
+	BaseName           string                      `toml:"-" json:"-"`
 	ServerName         string                      `toml:"-" json:"serverName,omitempty"`
 	User               string                      `toml:"user,omitempty" json:"user,omitempty"`
 	Host               string                      `toml:"host,omitempty" json:"host,omitempty"`
+	IgnoreIPAddresses  []string                    `toml:"ignoreIPAddresses,omitempty" json:"ignoreIPAddresses,omitempty"`
 	JumpServer         []string                    `toml:"jumpServer,omitempty" json:"jumpServer,omitempty"`
 	Port               string                      `toml:"port,omitempty" json:"port,omitempty"`
 	SSHConfigPath      string                      `toml:"sshConfigPath,omitempty" json:"sshConfigPath,omitempty"`
@@ -236,6 +240,7 @@ type ServerInfo struct {
 	Optional           map[string]interface{}      `toml:"optional,omitempty" json:"optional,omitempty"`     // Optional key-value set that will be outputted to JSON
 	Lockfiles          []string                    `toml:"lockfiles,omitempty" json:"lockfiles,omitempty"`   // ie) path/to/package-lock.json
 	FindLock           bool                        `toml:"findLock,omitempty" json:"findLock,omitempty"`
+	FindLockDirs       []string                    `toml:"findLockDirs,omitempty" json:"findLockDirs,omitempty"`
 	Type               string                      `toml:"type,omitempty" json:"type,omitempty"` // "pseudo" or ""
 	IgnoredJSONKeys    []string                    `toml:"ignoredJSONKeys,omitempty" json:"ignoredJSONKeys,omitempty"`
 	WordPress          *WordPressConf              `toml:"wordpress,omitempty" json:"wordpress,omitempty"`

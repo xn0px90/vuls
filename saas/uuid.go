@@ -3,7 +3,6 @@ package saas
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
@@ -104,6 +103,9 @@ func writeToFile(cnf config.Config, path string) error {
 	if cnf.Default.WordPress != nil && cnf.Default.WordPress.IsZero() {
 		cnf.Default.WordPress = nil
 	}
+	if cnf.Default.PortScan != nil && cnf.Default.PortScan.IsZero() {
+		cnf.Default.PortScan = nil
+	}
 
 	c := struct {
 		Saas    *config.SaasConf             `toml:"saas"`
@@ -139,7 +141,7 @@ func writeToFile(cnf config.Config, path string) error {
 		"# See README for details: https://vuls.io/docs/en/usage-settings.html",
 		str)
 
-	return ioutil.WriteFile(realPath, []byte(str), 0600)
+	return os.WriteFile(realPath, []byte(str), 0600)
 }
 
 func cleanForTOMLEncoding(server config.ServerInfo, def config.ServerInfo) config.ServerInfo {
@@ -196,6 +198,12 @@ func cleanForTOMLEncoding(server config.ServerInfo, def config.ServerInfo) confi
 	if server.WordPress != nil {
 		if server.WordPress.IsZero() || reflect.DeepEqual(server.WordPress, def.WordPress) {
 			server.WordPress = nil
+		}
+	}
+
+	if server.PortScan != nil {
+		if server.PortScan.IsZero() || reflect.DeepEqual(server.PortScan, def.PortScan) {
+			server.PortScan = nil
 		}
 	}
 

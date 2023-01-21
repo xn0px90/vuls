@@ -116,6 +116,10 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 			return nil, xerrors.Errorf("Failed to fill with Known Exploited Vulnerabilities: %w", err)
 		}
 
+		if err := FillWithCTI(&r, config.Conf.Cti, config.Conf.LogOpts); err != nil {
+			return nil, xerrors.Errorf("Failed to fill with Cyber Threat Intelligences: %w", err)
+		}
+
 		FillCweDict(&r)
 
 		r.ReportedBy, _ = os.Hostname()
@@ -208,31 +212,21 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 // pass 2 configs
 func DetectPkgCves(r *models.ScanResult, ovalCnf config.GovalDictConf, gostCnf config.GostConf, logOpts logging.LogOpts) error {
 	// Pkg Scan
-	if r.Release != "" {
-		if len(r.Packages)+len(r.SrcPackages) > 0 {
-			// OVAL, gost(Debian Security Tracker) does not support Package for Raspbian, so skip it.
-			if r.Family == constant.Raspbian {
-				r = r.RemoveRaspbianPackFromResult()
-			}
-
-			// OVAL
-			if err := detectPkgsCvesWithOval(ovalCnf, r, logOpts); err != nil {
-				return xerrors.Errorf("Failed to detect CVE with OVAL: %w", err)
-			}
-
-			// gost
-			if err := detectPkgsCvesWithGost(gostCnf, r, logOpts); err != nil {
-				return xerrors.Errorf("Failed to detect CVE with gost: %w", err)
-			}
-		} else {
-			logging.Log.Infof("Number of packages is 0. Skip OVAL and gost detection")
+	if isPkgCvesDetactable(r) {
+		// OVAL, gost(Debian Security Tracker) does not support Package for Raspbian, so skip it.
+		if r.Family == constant.Raspbian {
+			r = r.RemoveRaspbianPackFromResult()
 		}
-	} else if reuseScannedCves(r) {
-		logging.Log.Infof("r.Release is empty. Use CVEs as it as.")
-	} else if r.Family == constant.ServerTypePseudo {
-		logging.Log.Infof("pseudo type. Skip OVAL and gost detection")
-	} else {
-		logging.Log.Infof("r.Release is empty. detect as pseudo type. Skip OVAL and gost detection")
+
+		// OVAL
+		if err := detectPkgsCvesWithOval(ovalCnf, r, logOpts); err != nil {
+			return xerrors.Errorf("Failed to detect CVE with OVAL: %w", err)
+		}
+
+		// gost
+		if err := detectPkgsCvesWithGost(gostCnf, r, logOpts); err != nil {
+			return xerrors.Errorf("Failed to detect CVE with gost: %w", err)
+		}
 	}
 
 	for i, v := range r.ScannedCves {
@@ -265,6 +259,33 @@ func DetectPkgCves(r *models.ScanResult, ovalCnf config.GovalDictConf, gostCnf c
 	return nil
 }
 
+// isPkgCvesDetactable checks whether CVEs is detactable with gost and oval from the result
+func isPkgCvesDetactable(r *models.ScanResult) bool {
+	switch r.Family {
+	case constant.FreeBSD, constant.ServerTypePseudo:
+		logging.Log.Infof("%s type. Skip OVAL and gost detection", r.Family)
+		return false
+	case constant.Windows:
+		return true
+	default:
+		if r.ScannedVia == "trivy" {
+			logging.Log.Infof("r.ScannedVia is trivy. Skip OVAL and gost detection")
+			return false
+		}
+
+		if r.Release == "" {
+			logging.Log.Infof("r.Release is empty. Skip OVAL and gost detection")
+			return false
+		}
+
+		if len(r.Packages)+len(r.SrcPackages) == 0 {
+			logging.Log.Infof("Number of packages is 0. Skip OVAL and gost detection")
+			return false
+		}
+		return true
+	}
+}
+
 // DetectGitHubCves fetches CVEs from GitHub Security Alerts
 func DetectGitHubCves(r *models.ScanResult, githubConfs map[string]config.GitHubConf) error {
 	if len(githubConfs) == 0 {
@@ -282,6 +303,10 @@ func DetectGitHubCves(r *models.ScanResult, githubConfs map[string]config.GitHub
 		}
 		logging.Log.Infof("%s: %d CVEs detected with GHSA %s/%s",
 			r.FormatServerName(), n, owner, repo)
+
+		if err = DetectGitHubDependencyGraph(r, owner, repo, setting.Token); err != nil {
+			return xerrors.Errorf("Failed to access GitHub Dependency graph: %w", err)
+		}
 	}
 	return nil
 }
@@ -552,17 +577,13 @@ func FillCweDict(r *models.ScanResult) {
 
 	dict := map[string]models.CweDictEntry{}
 	for id := range uniqCweIDMap {
-		entry := models.CweDictEntry{}
+		entry := models.CweDictEntry{
+			OwaspTopTens:       map[string]string{},
+			CweTopTwentyfives:  map[string]string{},
+			SansTopTwentyfives: map[string]string{},
+		}
 		if e, ok := cwe.CweDictEn[id]; ok {
-			if rank, ok := cwe.OwaspTopTen2017[id]; ok {
-				entry.OwaspTopTen2017 = rank
-			}
-			if rank, ok := cwe.CweTopTwentyfive2019[id]; ok {
-				entry.CweTopTwentyfive2019 = rank
-			}
-			if rank, ok := cwe.SansTopTwentyfive[id]; ok {
-				entry.SansTopTwentyfive = rank
-			}
+			fillCweRank(&entry, id)
 			entry.En = &e
 		} else {
 			logging.Log.Debugf("CWE-ID %s is not found in English CWE Dict", id)
@@ -571,23 +592,34 @@ func FillCweDict(r *models.ScanResult) {
 
 		if r.Lang == "ja" {
 			if e, ok := cwe.CweDictJa[id]; ok {
-				if rank, ok := cwe.OwaspTopTen2017[id]; ok {
-					entry.OwaspTopTen2017 = rank
-				}
-				if rank, ok := cwe.CweTopTwentyfive2019[id]; ok {
-					entry.CweTopTwentyfive2019 = rank
-				}
-				if rank, ok := cwe.SansTopTwentyfive[id]; ok {
-					entry.SansTopTwentyfive = rank
-				}
+				fillCweRank(&entry, id)
 				entry.Ja = &e
 			} else {
 				logging.Log.Debugf("CWE-ID %s is not found in Japanese CWE Dict", id)
 				entry.Ja = &cwe.Cwe{CweID: id}
 			}
 		}
+
 		dict[id] = entry
 	}
 	r.CweDict = dict
 	return
+}
+
+func fillCweRank(entry *models.CweDictEntry, id string) {
+	for year, ranks := range cwe.OwaspTopTens {
+		if rank, ok := ranks[id]; ok {
+			entry.OwaspTopTens[year] = rank
+		}
+	}
+	for year, ranks := range cwe.CweTopTwentyfives {
+		if rank, ok := ranks[id]; ok {
+			entry.CweTopTwentyfives[year] = rank
+		}
+	}
+	for year, ranks := range cwe.SansTopTwentyfives {
+		if rank, ok := ranks[id]; ok {
+			entry.SansTopTwentyfives[year] = rank
+		}
+	}
 }

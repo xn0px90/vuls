@@ -2,25 +2,30 @@ package reporter
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/future-architect/vuls/models"
+	"github.com/CycloneDX/cyclonedx-go"
 	"golang.org/x/xerrors"
+
+	"github.com/future-architect/vuls/models"
+	"github.com/future-architect/vuls/reporter/sbom"
 )
 
 // LocalFileWriter writes results to a local file.
 type LocalFileWriter struct {
-	CurrentDir        string
-	DiffPlus          bool
-	DiffMinus         bool
-	FormatJSON        bool
-	FormatCsv         bool
-	FormatFullText    bool
-	FormatOneLineText bool
-	FormatList        bool
-	Gzip              bool
+	CurrentDir          string
+	DiffPlus            bool
+	DiffMinus           bool
+	FormatJSON          bool
+	FormatCsv           bool
+	FormatFullText      bool
+	FormatOneLineText   bool
+	FormatList          bool
+	FormatCycloneDXJSON bool
+	FormatCycloneDXXML  bool
+	Gzip                bool
 }
 
 func (w LocalFileWriter) Write(rs ...models.ScanResult) (err error) {
@@ -87,6 +92,28 @@ func (w LocalFileWriter) Write(rs ...models.ScanResult) (err error) {
 			}
 		}
 
+		if w.FormatCycloneDXJSON {
+			bs, err := sbom.GenerateCycloneDX(cyclonedx.BOMFileFormatJSON, r)
+			if err != nil {
+				return xerrors.Errorf("Failed to generate CycloneDX JSON. err: %w", err)
+			}
+			p := fmt.Sprintf("%s_cyclonedx.json", path)
+			if err := w.writeFile(p, bs, 0600); err != nil {
+				return xerrors.Errorf("Failed to write CycloneDX JSON. path: %s, err: %w", p, err)
+			}
+		}
+
+		if w.FormatCycloneDXXML {
+			bs, err := sbom.GenerateCycloneDX(cyclonedx.BOMFileFormatXML, r)
+			if err != nil {
+				return xerrors.Errorf("Failed to generate CycloneDX XML. err: %w", err)
+			}
+			p := fmt.Sprintf("%s_cyclonedx.xml", path)
+			if err := w.writeFile(p, bs, 0600); err != nil {
+				return xerrors.Errorf("Failed to write CycloneDX XML. path: %s, err: %w", p, err)
+			}
+		}
+
 	}
 	return nil
 }
@@ -99,5 +126,5 @@ func (w LocalFileWriter) writeFile(path string, data []byte, perm os.FileMode) (
 		}
 		path += ".gz"
 	}
-	return ioutil.WriteFile(path, []byte(data), perm)
+	return os.WriteFile(path, []byte(data), perm)
 }

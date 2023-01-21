@@ -200,68 +200,64 @@ func detectRedhat(c config.ServerInfo) (bool, osTypeInterface) {
 		// Fedora release 35 (Thirty Five)
 		if r := exec(c, "cat /etc/redhat-release", noSudo); r.isSuccess() {
 			result := releasePattern.FindStringSubmatch(strings.TrimSpace(r.Stdout))
-			if len(result) != 3 {
-				rhel := newRHEL(c)
-				rhel.setErrs([]error{xerrors.Errorf("Failed to parse /etc/redhat-release. r.Stdout: %s", r.Stdout)})
-				return true, rhel
-			}
-
-			release := result[2]
-			major, err := strconv.Atoi(util.Major(release))
-			if err != nil {
-				rhel := newRHEL(c)
-				rhel.setErrs([]error{xerrors.Errorf("Failed to parse major version from release: %s", release)})
-				return true, rhel
-			}
-			switch strings.ToLower(result[1]) {
-			case "fedora":
-				fed := newFedora(c)
-				if major < 32 {
-					fed.setErrs([]error{xerrors.Errorf("Failed to init Fedora. err: not supported major version. versions prior to Fedora 32 are not supported, detected version is %s", release)})
-					return true, fed
-				}
-				fed.setDistro(constant.Fedora, release)
-				return true, fed
-			case "centos", "centos linux":
-				cent := newCentOS(c)
-				if major < 5 {
-					cent.setErrs([]error{xerrors.Errorf("Failed to init CentOS. err: not supported major version. versions prior to CentOS 5 are not supported, detected version is %s", release)})
-					return true, cent
-				}
-				cent.setDistro(constant.CentOS, release)
-				return true, cent
-			case "centos stream":
-				cent := newCentOS(c)
-				if major < 8 {
-					cent.setErrs([]error{xerrors.Errorf("Failed to init CentOS Stream. err: not supported major version. versions prior to CentOS Stream 8 are not supported, detected version is %s", release)})
-					return true, cent
-				}
-				cent.setDistro(constant.CentOS, fmt.Sprintf("stream%s", release))
-				return true, cent
-			case "alma", "almalinux":
-				alma := newAlma(c)
-				if major < 8 {
-					alma.setErrs([]error{xerrors.Errorf("Failed to init AlmaLinux. err: not supported major version. versions prior to AlmaLinux 8 are not supported, detected version is %s", release)})
-					return true, alma
-				}
-				alma.setDistro(constant.Alma, release)
-				return true, alma
-			case "rocky", "rocky linux":
-				rocky := newRocky(c)
-				if major < 8 {
-					rocky.setErrs([]error{xerrors.Errorf("Failed to init Rocky Linux. err: not supported major version. versions prior to Rocky Linux 8 are not supported, detected version is %s", release)})
-					return true, rocky
-				}
-				rocky.setDistro(constant.Rocky, release)
-				return true, rocky
-			default:
-				rhel := newRHEL(c)
-				if major < 5 {
-					rhel.setErrs([]error{xerrors.Errorf("Failed to init RedHat Enterprise Linux. err: not supported major version. versions prior to RedHat Enterprise Linux 5 are not supported, detected version is %s", release)})
+			if len(result) == 3 {
+				release := result[2]
+				major, err := strconv.Atoi(util.Major(release))
+				if err != nil {
+					rhel := newRHEL(c)
+					rhel.setErrs([]error{xerrors.Errorf("Failed to parse major version from release: %s", release)})
 					return true, rhel
 				}
-				rhel.setDistro(constant.RedHat, release)
-				return true, rhel
+				switch strings.ToLower(result[1]) {
+				case "fedora":
+					fed := newFedora(c)
+					if major < 32 {
+						fed.setErrs([]error{xerrors.Errorf("Failed to init Fedora. err: not supported major version. versions prior to Fedora 32 are not supported, detected version is %s", release)})
+						return true, fed
+					}
+					fed.setDistro(constant.Fedora, release)
+					return true, fed
+				case "centos", "centos linux":
+					cent := newCentOS(c)
+					if major < 5 {
+						cent.setErrs([]error{xerrors.Errorf("Failed to init CentOS. err: not supported major version. versions prior to CentOS 5 are not supported, detected version is %s", release)})
+						return true, cent
+					}
+					cent.setDistro(constant.CentOS, release)
+					return true, cent
+				case "centos stream":
+					cent := newCentOS(c)
+					if major < 8 {
+						cent.setErrs([]error{xerrors.Errorf("Failed to init CentOS Stream. err: not supported major version. versions prior to CentOS Stream 8 are not supported, detected version is %s", release)})
+						return true, cent
+					}
+					cent.setDistro(constant.CentOS, fmt.Sprintf("stream%s", release))
+					return true, cent
+				case "alma", "almalinux":
+					alma := newAlma(c)
+					if major < 8 {
+						alma.setErrs([]error{xerrors.Errorf("Failed to init AlmaLinux. err: not supported major version. versions prior to AlmaLinux 8 are not supported, detected version is %s", release)})
+						return true, alma
+					}
+					alma.setDistro(constant.Alma, release)
+					return true, alma
+				case "rocky", "rocky linux":
+					rocky := newRocky(c)
+					if major < 8 {
+						rocky.setErrs([]error{xerrors.Errorf("Failed to init Rocky Linux. err: not supported major version. versions prior to Rocky Linux 8 are not supported, detected version is %s", release)})
+						return true, rocky
+					}
+					rocky.setDistro(constant.Rocky, release)
+					return true, rocky
+				default:
+					rhel := newRHEL(c)
+					if major < 5 {
+						rhel.setErrs([]error{xerrors.Errorf("Failed to init RedHat Enterprise Linux. err: not supported major version. versions prior to RedHat Enterprise Linux 5 are not supported, detected version is %s", release)})
+						return true, rhel
+					}
+					rhel.setDistro(constant.RedHat, release)
+					return true, rhel
+				}
 			}
 		}
 	}
@@ -448,13 +444,28 @@ func (o *redhatBase) scanInstalledPackages() (models.Packages, error) {
 		Version: version,
 	}
 
-	r := o.exec(o.rpmQa(), noSudo)
+	var r execResult
+	switch o.getDistro().Family {
+	case constant.Amazon:
+		switch strings.Fields(o.getDistro().Release)[0] {
+		case "2":
+			if o.exec("rpm -q yum-utils", noSudo).isSuccess() {
+				r = o.exec("repoquery --all --pkgnarrow=installed --qf='%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH} %{UI_FROM_REPO}'", o.sudo.repoquery())
+			} else {
+				r = o.exec(o.rpmQa(), noSudo)
+			}
+		default:
+			r = o.exec(o.rpmQa(), noSudo)
+		}
+	default:
+		r = o.exec(o.rpmQa(), noSudo)
+	}
 	if !r.isSuccess() {
 		return nil, xerrors.Errorf("Scan packages failed: %s", r)
 	}
 	installed, _, err := o.parseInstalledPackages(r.Stdout)
 	if err != nil {
-		return nil, err
+		return nil, xerrors.Errorf("Failed to parse installed packages. err: %w", err)
 	}
 	return installed, nil
 }
@@ -469,7 +480,29 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
 		if trimmed := strings.TrimSpace(line); trimmed == "" {
 			continue
 		}
-		pack, err := o.parseInstalledPackagesLine(line)
+
+		var (
+			pack *models.Package
+			err  error
+		)
+		switch o.getDistro().Family {
+		case constant.Amazon:
+			switch strings.Fields(o.getDistro().Release)[0] {
+			case "2":
+				switch len(strings.Fields(line)) {
+				case 5:
+					pack, err = o.parseInstalledPackagesLine(line)
+				case 6:
+					pack, err = o.parseInstalledPackagesLineFromRepoquery(line)
+				default:
+					return nil, nil, xerrors.Errorf("Failed to parse package line: %s", line)
+				}
+			default:
+				pack, err = o.parseInstalledPackagesLine(line)
+			}
+		default:
+			pack, err = o.parseInstalledPackagesLine(line)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -519,6 +552,34 @@ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, e
 		Version: ver,
 		Release: fields[3],
 		Arch:    fields[4],
+	}, nil
+}
+
+func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*models.Package, error) {
+	fields := strings.Fields(line)
+	if len(fields) != 6 {
+		return nil, xerrors.Errorf("Failed to parse package line: %s", line)
+	}
+
+	ver := ""
+	epoch := fields[1]
+	if epoch == "0" || epoch == "(none)" {
+		ver = fields[2]
+	} else {
+		ver = fmt.Sprintf("%s:%s", epoch, fields[2])
+	}
+
+	repo := strings.TrimPrefix(fields[5], "@")
+	if repo == "installed" {
+		repo = "amzn2-core"
+	}
+
+	return &models.Package{
+		Name:       fields[0],
+		Version:    ver,
+		Release:    fields[3],
+		Arch:       fields[4],
+		Repository: repo,
 	}, nil
 }
 
@@ -740,7 +801,7 @@ func (o *redhatBase) parseNeedsRestarting(stdout string) (procs []models.NeedRes
 	return
 }
 
-//TODO refactor
+// TODO refactor
 // procPathToFQPN returns Fully-Qualified-Package-Name from the command
 func (o *redhatBase) procPathToFQPN(execCommand string) (string, error) {
 	execCommand = strings.Replace(execCommand, "\x00", " ", -1) // for CentOS6.9
@@ -784,49 +845,49 @@ func (o *redhatBase) getOwnerPkgs(paths []string) (names []string, _ error) {
 
 func (o *redhatBase) rpmQa() string {
 	const old = `rpm -qa --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH}\n"`
-	const new = `rpm -qa --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n"`
+	const newer = `rpm -qa --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n"`
 	switch o.Distro.Family {
 	case constant.OpenSUSE:
 		if o.Distro.Release == "tumbleweed" {
-			return new
+			return newer
 		}
 		return old
 	case constant.OpenSUSELeap:
-		return new
+		return newer
 	case constant.SUSEEnterpriseServer, constant.SUSEEnterpriseDesktop:
 		if v, _ := o.Distro.MajorVersion(); v < 12 {
 			return old
 		}
-		return new
+		return newer
 	default:
 		if v, _ := o.Distro.MajorVersion(); v < 6 {
 			return old
 		}
-		return new
+		return newer
 	}
 }
 
 func (o *redhatBase) rpmQf() string {
 	const old = `rpm -qf --queryformat "%{NAME} %{EPOCH} %{VERSION} %{RELEASE} %{ARCH}\n" `
-	const new = `rpm -qf --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n" `
+	const newer = `rpm -qf --queryformat "%{NAME} %{EPOCHNUM} %{VERSION} %{RELEASE} %{ARCH}\n" `
 	switch o.Distro.Family {
 	case constant.OpenSUSE:
 		if o.Distro.Release == "tumbleweed" {
-			return new
+			return newer
 		}
 		return old
 	case constant.OpenSUSELeap:
-		return new
+		return newer
 	case constant.SUSEEnterpriseServer, constant.SUSEEnterpriseDesktop:
 		if v, _ := o.Distro.MajorVersion(); v < 12 {
 			return old
 		}
-		return new
+		return newer
 	default:
 		if v, _ := o.Distro.MajorVersion(); v < 6 {
 			return old
 		}
-		return new
+		return newer
 	}
 }
 
